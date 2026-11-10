@@ -347,10 +347,10 @@ Free models may log prompts; textbook equations degrade in extraction; Builder q
 | M0 | Skeleton (pywebview+FastAPI+React, OpenAPI client gen), settings, all [VERIFY] → DECISIONS.md | 0–3, 6.1, 6.4 | Window opens on Windows; every VERIFY recorded |
 | M1 | Router: 4 adapters, routing.yaml, counters, logging, failover, env stripping | 0, 3, 5 | Mock tests pass; live smoke on claude_code + one free model; forced 429 fails over; paid ID rejected |
 | M2 | `rfic:1`, container manager (§4.2), GUI/Jupyter launch, MCP server, job system, preflight | 0, 4.2, 6 | `claude -p` runs ngspice via MCP; openEMS sample runs; Xschem visible on host; jobs stream to UI |
-| **M2.5** | **Builder spike (go/no-go)**: draft `builder.md`; generate 3 nodes (SKY130 circuit, IHP circuit, openEMS passive) with gate script | 0, 5, 6.2, 7.1 | ≥ 2 of 3 pass gate within 2 retries; record wall time + usage per node in DECISIONS.md; if failed, stop and report to user before further work |
+| **M2.5** | **Builder spike (go/no-go)**: draft `builder.md`; generate 3 nodes (SKY130 circuit, IHP circuit, openEMS passive) with gate script | 0, 4.1, 5, 6.2, 7.1 | ≥ 2 of 3 pass gate within 2 retries; record wall time + usage per node in DECISIONS.md; if failed, stop and report to user before further work |
 | M3 | FS + events.jsonl + SQLite cache + `rebuild_db` + competency engine | 0, 4, 5, 8 | Unit tests cover every row of §8.2, §8.3 window, §8.4 unlock; rebuild reproduces scores |
 | M4 | Onboarding | 0, 5, 8.1, 9 | Fresh data dir → goals, approved framework, tiers (mock + one live run) |
-| M5 | Builder productionized + full gate + interleaving | 0, 5, 7.1 | 3 nodes generated end-to-end from Planner options |
+| M5 | Builder productionized + full gate + interleaving | 0, 4.1, 5, 7.1 | 3 nodes generated end-to-end from Planner options |
 | M6 | Lifecycle UI: prelab, lab, tutor, show-me, proof, debrief, rescope, grading queue | 0, 3.1, 5, 7.2–7.5, 7.7 | Node completable in text mode; tutor leaks no `_hidden` value in 5 adversarial prompts |
 | M7 | Voice oral + grading | 0, 5.4, 5.7, 7.6 | Transcribes 15 s utterance in < 5 s on CPU; RFIC terms in vocab transcribed correctly in 8/10 test clips; grades valid JSON with quotes |
 | M8 | Planner, difficulty control, remediation, misconception resolution, graph | 0, 5.6, 7.7, 11 | Oral fail spawns remediation child; misconception reappears in a later node and resolves; graph renders |
