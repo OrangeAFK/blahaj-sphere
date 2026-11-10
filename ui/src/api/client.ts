@@ -4,6 +4,12 @@ export type Settings = components['schemas']['Settings']
 export type Job = components['schemas']['Job']
 export type Check = components['schemas']['Check']
 export type ContainerStatus = components['schemas']['ContainerStatus']
+export type OnboardingState = components['schemas']['OnboardingState']
+export type InterviewView = components['schemas']['InterviewView']
+export type Framework = components['schemas']['Framework']
+export type FrameworkView = components['schemas']['FrameworkView']
+export type DiagnosticView = components['schemas']['DiagnosticView']
+export type AnswerResult = components['schemas']['AnswerResult']
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
@@ -30,6 +36,18 @@ export const api = {
   rficContainer: () => req<ContainerStatus>('/rfic/container'),
   startRficContainer: () => post<ContainerStatus>('/rfic/container/start'),
   launchGui: (tool: string, node?: string) => post<{ url: string }>('/rfic/gui', { tool, node }),
+  onboardingState: () => req<OnboardingState>('/onboarding/state'),
+  interview: () => req<InterviewView>('/onboarding/interview'),
+  interviewTurn: (answer?: string) => post<InterviewView>('/onboarding/interview/turn', { answer }),
+  putGoals: (text: string) => req<{ ok: boolean }>('/onboarding/goals', { method: 'PUT', body: JSON.stringify({ text }) }),
+  getFramework: () => req<FrameworkView>('/onboarding/framework'),
+  draftFramework: () => post<FrameworkView>('/onboarding/framework/draft'),
+  saveFrameworkDraft: (fw: Framework) =>
+    req<FrameworkView>('/onboarding/framework/draft', { method: 'PUT', body: JSON.stringify(fw) }),
+  approveFramework: (fw?: Framework) => post<FrameworkView>('/onboarding/framework/approve', { framework: fw ?? null }),
+  getDiagnostic: () => req<DiagnosticView>('/onboarding/diagnostic'),
+  diagnosticNext: () => post<DiagnosticView>('/onboarding/diagnostic/next'),
+  diagnosticAnswer: (answer: string) => post<AnswerResult>('/onboarding/diagnostic/answer', { answer }),
   launchJupyter: (node: string) => post<{ url: string }>('/rfic/jupyter', { node }),
 }
 

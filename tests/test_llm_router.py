@@ -56,7 +56,9 @@ def test_shipped_routing_yaml_is_valid_and_complete():
     assert [e.backend for e in cfg.tasks["plan_branches"].chain] == ["claude_code", "cursor_cli"]
     g = cfg.tasks["grade_oral"]
     assert g.grading and len(g.chain) == 1 and g.chain[0].model
-    assert cfg.tasks["tutor_chat"].chain[-1].backend == "claude_code"
+    light = cfg.tasks["tutor_chat"]
+    assert light.light and (light.chain[-1].backend, light.chain[-1].model) == ("claude_code", "claude-haiku-5-5")
+    assert not cfg.tasks["draft_framework"].light
 
 
 def test_mock_call_logs_and_counts(tmp_path):
@@ -190,7 +192,7 @@ def test_claude_adapter_subprocess_parsing(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-dummy")
     monkeypatch.setattr(subprocess, "run", fake_run)
     res = ClaudeCodeAdapter(binary="claude").complete(Request("t", MSG, schema={"type": "object"}), "claude-x", 5)
-    assert res.json == {"a": 1} and res.usage == {"input_tokens": 5, "output_tokens": 2} and res.model == "claude-x"
+    assert res.json == {"a": 1} and res.usage["input_tokens"] == 5 and res.usage["output_tokens"] == 2 and res.model == "claude-x"
     assert "ANTHROPIC_API_KEY" not in seen["env"]
 
 
@@ -238,3 +240,47 @@ def test_openrouter_auth_error_is_fatal():
     with pytest.raises(LLMError) as ei:
         _or(lambda request: httpx.Response(401, text="no")).complete(Request("t", MSG), FREE_B, 5)
     assert not isinstance(ei.value, RetryableError)
+
+
+def test_light_claude_cmd_is_minimal_and_ignores_tools_and_mcp(tmp_path):
+    a = ClaudeCodeAdapter(binary="claude")
+    req = Request("tutor_chat", MSG, tools=["mcp__rfic__run_ngspice"], mcp_config="m.json", light=True)
+    cmd = a.build_cmd(req, "claude-haiku-5-5", "sys.txt")
+    assert cmd[cmd.index("--tools") + 1] == ""
+    assert "--strict-mcp-config" in cmd and "--mcp-config" not in cmd and "--allowedTools" not in cmd
+    assert cmd[cmd.index("--system-prompt-file") + 1] == "sys.txt" and cmd[cmd.index("--model") + 1] == "claude-haiku-5-5"
+    for flag in ("--disable-slash-commands", "--no-session-persistence"):
+        assert flag in cmd
+    assert cmd[cmd.index("--setting-sources") + 1] == ""
+
+
+def test_light_claude_call_replaces_system_prompt_and_reports_total_usage(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["input"], seen["cwd"] = cmd, kw["input"], kw["cwd"]
+        seen["system"] = open(cmd[cmd.index("--system-prompt-file") + 1], encoding="utf-8").read()
+        out = {"result": "hello", "is_error": False, "modelUsage": {"claude-haiku-5-5": {}},
+               "usage": {"input_tokens": 2, "cache_creation_input_tokens": 600, "cache_read_input_tokens": 70, "output_tokens": 9}}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(out), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    sys_text = "Be terse." + chr(10) + "Line two."
+    msgs = [{"role": "system", "content": sys_text}, {"role": "user", "content": "hi"}]
+    res = ClaudeCodeAdapter(binary="claude").complete(Request("interview", msgs, light=True), "claude-haiku-5-5", 5)
+    assert seen["system"] == sys_text and seen["input"] == "hi"  # system text goes via file, not the prompt
+    assert res.usage == {"input_tokens": 672, "output_tokens": 9, "cache_creation_tokens": 600, "cache_read_tokens": 70}
+    assert seen["cwd"] and "blahaj-light-" in seen["cwd"]
+
+
+def test_router_marks_light_tasks(tmp_path):
+    r, _ = make_router(tmp_path, {"interview": {"light": True, "chain": [{"backend": "mock", "model": "m"}]},
+                                  "x": {"chain": [{"backend": "mock", "model": "m"}]}})
+    assert r.config.tasks["interview"].light and not r.config.tasks["x"].light
+
+
+def test_openrouter_without_key_falls_through_to_the_next_entry(tmp_path):
+    cfg = parse_routing({"tasks": {"summarize": {"light": True, "chain": [{"backend": "openrouter", "model": FREE_B}, {"backend": "mock", "model": "m"}]}}})
+    adapters = {"openrouter": OpenRouterAdapter(api_key=lambda: ""), "mock": MockAdapter()}
+    res = Router(cfg, Store(tmp_path / "llm.db"), adapters).complete("summarize", MSG)
+    assert res.backend == "mock"

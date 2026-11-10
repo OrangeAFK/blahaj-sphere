@@ -20,6 +20,7 @@ class Entry:
 class TaskRoute:
     chain: list[Entry]
     grading: bool = False
+    light: bool = False
 
 
 @dataclass
@@ -51,7 +52,7 @@ def parse_routing(data: dict) -> RoutingConfig:
             chain.append(e)
         if not chain:
             raise ValueError(f"routing: task {name!r} has an empty chain")
-        tasks[name] = TaskRoute(chain, bool(t.get("grading", False)))
+        tasks[name] = TaskRoute(chain, bool(t.get("grading", False)), bool(t.get("light", False)))
     return RoutingConfig(
         tasks=tasks,
         timeout_s={k: float(v) for k, v in (data.get("timeout_s") or {}).items()},

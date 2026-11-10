@@ -1,0 +1,74 @@
+# RFIC competency framework template (SPEC §8.1). The framework drafter adapts this to the user's goals:
+# it may reword descriptors, add/merge/drop domains (5-8 total) and seed subskills. Domain ids are event keys.
+domain_pack: rfic
+domains:
+  - id: passives
+    name: Passives & transmission lines
+    scope: On-chip inductors, capacitors, resistors, transformers, microstrip/CPW lines, Q, parasitics, S-parameters of passive networks.
+    subskills: [passives.inductor_q, passives.tline_basics]
+    tiers:
+      1: Names the elements of an on-chip passive model and states how its value and Q change with frequency.
+      2: Extracts inductance, capacitance and Q from simulated S-parameters and explains the deviation from ideal.
+      3: Designs a transmission line or inductor to a target impedance or Q in a given stack-up and verifies it by simulation.
+      4: Trades Q, area and self-resonance for a block's requirement and justifies the layout choice with simulation evidence.
+      5: Builds a scalable passive model from measurement or EM data and defends its validity range.
+  - id: matching
+    name: Impedance matching
+    scope: Smith chart, L/pi/T networks, bandwidth and Q of matching networks, return loss.
+    subskills: [matching.l_network, smith_chart.navigation]
+    tiers:
+      1: Reads impedance, reflection coefficient and return loss off the Smith chart.
+      2: Hand-designs an L-network for a given source and load and checks it in simulation.
+      3: Designs wideband or multi-section matches and predicts their loaded Q and bandwidth.
+      4: Co-designs matching with device parasitics and passive losses to meet a gain and return-loss spec.
+      5: Matches under process and load variation and justifies tunable or robust topologies.
+  - id: devices
+    name: Active devices & biasing
+    scope: MOS and HBT small-signal models, gm/Id sizing, bias circuits, fT/fmax, parasitics, temperature and corner effects.
+    subskills: [devices.small_signal, devices.biasing]
+    tiers:
+      1: Identifies device small-signal parameters and relates bias current to gm.
+      2: Sizes a single-stage amplifier from gm/Id and verifies gain and bias in simulation.
+      3: Designs bias networks that hold performance across corners and temperature.
+      4: Chooses device type, size and bias for a block's gain, noise and linearity targets with quantitative reasoning.
+      5: Predicts and explains high-frequency device behavior from the PDK model, including its limits.
+  - id: noise
+    name: Noise
+    scope: Thermal and flicker noise, noise figure, cascade (Friis), noise matching, phase noise basics.
+    subskills: [noise.figure_cascade, noise.sources]
+    tiers:
+      1: Names the dominant noise sources in a simple stage and defines noise figure.
+      2: Computes the noise figure of a cascade by hand and confirms it in simulation.
+      3: Estimates a single-stage amplifier's noise figure from device parameters and trades it against gain.
+      4: Noise-matches an input network and quantifies the cost in gain and linearity.
+      5: Budgets noise across a receiver chain and explains where simulation and theory diverge.
+  - id: linearity
+    name: Linearity & stability
+    scope: Compression, IP3, harmonic and intermod distortion, K-factor, stability circles, feedback and neutralization.
+    subskills: [linearity.compression, linearity.stability_k]
+    tiers:
+      1: Defines P1dB and IIP3 and states what limits each in a simple stage.
+      2: Extracts P1dB and IIP3 from simulation and explains the measured slope.
+      3: Evaluates and fixes the stability of an amplifier using K, mu and stability circles.
+      4: Trades linearity against gain, noise and power in a design and shows the compromise with data.
+      5: Diagnoses a distortion or instability mechanism from simulation alone and proposes a verified fix.
+  - id: em_layout
+    name: EM & layout
+    scope: Layout parasitics, EM simulation of interconnect and passives, substrate coupling, ground return, port setup.
+    subskills: [em_layout.port_setup, em_layout.parasitics]
+    tiers:
+      1: Identifies the layout features that create parasitic capacitance and inductance.
+      2: Sets up a simple EM simulation with correct ports and reads Z0 and S-parameters from it.
+      3: Extracts layout parasitics and shows their effect on a circuit's response.
+      4: Designs a layout for a given performance target and validates it with EM co-simulation.
+      5: Explains discrepancies between EM, circuit simulation and measurement and resolves them.
+  - id: measurement
+    name: Measurement & characterization
+    scope: VNA basics, de-embedding, calibration, noise and power measurement concepts, reading and checking simulation data.
+    subskills: [measurement.sparams, measurement.deembedding]
+    tiers:
+      1: Describes what a VNA measures and how S-parameters are read and plotted.
+      2: Explains calibration and why a reference plane matters, and spots obvious measurement artifacts.
+      3: Plans a de-embedding procedure for a device in a pad structure and states its error sources.
+      4: Designs a characterization plan for a block, including calibration, fixtures and uncertainty.
+      5: Judges the validity of a published or measured dataset and reconciles it with simulation.

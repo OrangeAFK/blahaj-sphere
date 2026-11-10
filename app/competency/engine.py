@@ -16,6 +16,7 @@ UNLOCK_MASTERY = 65.0
 UNLOCK_SUBSKILLS = 3
 EXAM_ITEMS = 6
 EXAM_PASS_MEAN = 2.3  # on the 0-3 item scale; no item may be 0
+DIAGNOSTIC_PASS_MEAN = 2.0  # diagnostics have ~1 probe per tier, so the 6-item exam bar (2.3) would demand a perfect 3 (DECISIONS M4)
 
 INTERLEAVED_WEIGHT_MULT = 1.5
 ASSIST_REVEAL_VALUE_MULT = 0.7
@@ -97,10 +98,15 @@ def exam_passed(scores: Sequence[float]) -> bool:
     return bool(scores) and min(scores) > 0 and sum(scores) / len(scores) >= EXAM_PASS_MEAN - _EPS
 
 
+def diagnostic_tier_passed(scores: Sequence[float]) -> bool:
+    """A diagnostic tier is passed at mean >= 2.0 (0-3 scale) with no 0."""
+    return bool(scores) and min(scores) > 0 and sum(scores) / len(scores) >= DIAGNOSTIC_PASS_MEAN - _EPS
+
+
 def initial_tier(diagnostic: Sequence[Event]) -> int:
     """Tier to start a domain at, from its diagnostic items (SPEC gives no rule; DECISIONS M3).
 
-    A tier t is 'passed' if its diagnostic items meet the exam bar (mean >= 2.3, none 0). Start at one above the
+    A tier t is 'passed' if its diagnostic items meet the diagnostic bar (mean >= 2.0, none 0; DECISIONS M4). Start at one above the
     highest tier t whose own and all lower tiers with items are passed; no diagnostic -> tier 1.
     """
     by_tier: dict[int, list[float]] = {}
@@ -108,7 +114,7 @@ def initial_tier(diagnostic: Sequence[Event]) -> int:
         by_tier.setdefault(e.tier, []).append(e.value * 3.0)
     t = MIN_TIER - 1
     for tier in sorted(by_tier):
-        if not exam_passed(by_tier[tier]):
+        if not diagnostic_tier_passed(by_tier[tier]):
             break
         t = tier
     return min(MAX_TIER, max(MIN_TIER, t + 1))

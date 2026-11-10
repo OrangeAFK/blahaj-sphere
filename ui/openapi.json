@@ -266,6 +266,305 @@
         }
       }
     },
+    "/api/onboarding/state": {
+      "get": {
+        "summary": "Get State",
+        "operationId": "getOnboardingState",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingState"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/interview": {
+      "get": {
+        "summary": "Get Interview",
+        "operationId": "getInterview",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/interview/turn": {
+      "post": {
+        "summary": "Interview Turn",
+        "description": "No answer = ask the first question; otherwise submit the answer and get the next question (or the finished goals).",
+        "operationId": "interviewTurn",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterviewTurn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/goals": {
+      "put": {
+        "summary": "Put Goals",
+        "operationId": "putGoals",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Putgoals"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/framework": {
+      "get": {
+        "summary": "Get Framework",
+        "operationId": "getFramework",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrameworkView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/framework/draft": {
+      "put": {
+        "summary": "Save Framework Draft",
+        "operationId": "saveFrameworkDraft",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Framework"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrameworkView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Draft Framework",
+        "operationId": "draftFramework",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrameworkView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/framework/approve": {
+      "post": {
+        "summary": "Approve Framework",
+        "operationId": "approveFramework",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrameworkView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/diagnostic": {
+      "get": {
+        "summary": "Get Diagnostic",
+        "operationId": "getDiagnostic",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/diagnostic/next": {
+      "post": {
+        "summary": "Diagnostic Next",
+        "operationId": "diagnosticNext",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/diagnostic/answer": {
+      "post": {
+        "summary": "Diagnostic Answer",
+        "operationId": "diagnosticAnswer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rfic/container": {
       "get": {
         "summary": "Container Status",
@@ -457,6 +756,52 @@
   },
   "components": {
     "schemas": {
+      "AnswerBody": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer"
+        ],
+        "title": "AnswerBody"
+      },
+      "AnswerResult": {
+        "properties": {
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          },
+          "view": {
+            "$ref": "#/components/schemas/DiagnosticView"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "view"
+        ],
+        "title": "AnswerResult"
+      },
+      "ApproveBody": {
+        "properties": {
+          "framework": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Framework"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApproveBody"
+      },
       "Check": {
         "properties": {
           "id": {
@@ -549,6 +894,186 @@
         ],
         "title": "ContainerStatus"
       },
+      "DiagnosticDomain": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "done": {
+            "type": "boolean",
+            "title": "Done"
+          },
+          "probes": {
+            "items": {
+              "$ref": "#/components/schemas/ProbeResult"
+            },
+            "type": "array",
+            "title": "Probes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "done",
+          "probes"
+        ],
+        "title": "DiagnosticDomain"
+      },
+      "DiagnosticView": {
+        "properties": {
+          "done": {
+            "type": "boolean",
+            "title": "Done"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbeView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tiers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tiers"
+          },
+          "domains": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticDomain"
+            },
+            "type": "array",
+            "title": "Domains"
+          }
+        },
+        "type": "object",
+        "required": [
+          "done",
+          "pending",
+          "tiers",
+          "domains"
+        ],
+        "title": "DiagnosticView"
+      },
+      "Framework": {
+        "properties": {
+          "domain_pack": {
+            "type": "string",
+            "title": "Domain Pack"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "default": 1
+          },
+          "domains": {
+            "items": {
+              "$ref": "#/components/schemas/FrameworkDomain"
+            },
+            "type": "array",
+            "title": "Domains"
+          }
+        },
+        "type": "object",
+        "required": [
+          "domain_pack",
+          "domains"
+        ],
+        "title": "Framework"
+      },
+      "FrameworkDomain": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": ""
+          },
+          "subskills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Subskills",
+            "default": []
+          },
+          "tiers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Tiers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "tiers"
+        ],
+        "title": "FrameworkDomain"
+      },
+      "FrameworkView": {
+        "properties": {
+          "frozen": {
+            "type": "boolean",
+            "title": "Frozen"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Framework"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "frozen",
+          "framework"
+        ],
+        "title": "FrameworkView"
+      },
+      "GoalsBody": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "GoalsBody"
+      },
       "GuiRequest": {
         "properties": {
           "tool": {
@@ -629,6 +1154,70 @@
           "status"
         ],
         "title": "Health"
+      },
+      "InterviewTurn": {
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          }
+        },
+        "type": "object",
+        "title": "InterviewTurn"
+      },
+      "InterviewView": {
+        "properties": {
+          "done": {
+            "type": "boolean",
+            "title": "Done"
+          },
+          "questions_asked": {
+            "type": "integer",
+            "title": "Questions Asked"
+          },
+          "max_questions": {
+            "type": "integer",
+            "title": "Max Questions"
+          },
+          "last_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message"
+          },
+          "goals": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goals"
+          }
+        },
+        "type": "object",
+        "required": [
+          "done",
+          "questions_asked",
+          "max_questions",
+          "last_message",
+          "goals"
+        ],
+        "title": "InterviewView"
       },
       "Job": {
         "properties": {
@@ -748,6 +1337,85 @@
           "node"
         ],
         "title": "JupyterRequest"
+      },
+      "OnboardingState": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "goals": {
+            "type": "boolean",
+            "title": "Goals"
+          },
+          "framework_frozen": {
+            "type": "boolean",
+            "title": "Framework Frozen"
+          },
+          "diagnostic_done": {
+            "type": "boolean",
+            "title": "Diagnostic Done"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "goals",
+          "framework_frozen",
+          "diagnostic_done"
+        ],
+        "title": "OnboardingState"
+      },
+      "ProbeResult": {
+        "properties": {
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "subskill": {
+            "type": "string",
+            "title": "Subskill"
+          },
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tier",
+          "subskill",
+          "score"
+        ],
+        "title": "ProbeResult"
+      },
+      "ProbeView": {
+        "properties": {
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "subskill": {
+            "type": "string",
+            "title": "Subskill"
+          },
+          "question": {
+            "type": "string",
+            "title": "Question"
+          }
+        },
+        "type": "object",
+        "required": [
+          "domain",
+          "tier",
+          "subskill",
+          "question"
+        ],
+        "title": "ProbeView"
       },
       "RunRequest": {
         "properties": {

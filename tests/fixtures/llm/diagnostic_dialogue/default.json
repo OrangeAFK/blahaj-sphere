@@ -1,0 +1,12 @@
+{
+ "json": {
+  "subskill": "matching.l_network",
+  "question": "Why does an L-network match only over a narrow band?",
+  "anchors": {
+   "0": "blank or wrong",
+   "1": "mentions Q vaguely",
+   "2": "links loaded Q to bandwidth",
+   "3": "links loaded Q to bandwidth and gives the formula or magnitude"
+  }
+ }
+}

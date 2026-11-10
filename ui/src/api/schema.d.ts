@@ -153,6 +153,180 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/onboarding/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get State */
+        get: operations["getOnboardingState"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/interview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Interview */
+        get: operations["getInterview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/interview/turn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Interview Turn
+         * @description No answer = ask the first question; otherwise submit the answer and get the next question (or the finished goals).
+         */
+        post: operations["interviewTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Goals */
+        put: operations["putGoals"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/framework": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Framework */
+        get: operations["getFramework"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/framework/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save Framework Draft */
+        put: operations["saveFrameworkDraft"];
+        /** Draft Framework */
+        post: operations["draftFramework"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/framework/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Framework */
+        post: operations["approveFramework"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/diagnostic": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Diagnostic */
+        get: operations["getDiagnostic"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/diagnostic/next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Diagnostic Next */
+        post: operations["diagnosticNext"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/diagnostic/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Diagnostic Answer */
+        post: operations["diagnosticAnswer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rfic/container": {
         parameters: {
             query?: never;
@@ -282,6 +456,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AnswerBody */
+        AnswerBody: {
+            /** Answer */
+            answer: string;
+        };
+        /** AnswerResult */
+        AnswerResult: {
+            /** Score */
+            score: number;
+            view: components["schemas"]["DiagnosticView"];
+        };
+        /** ApproveBody */
+        ApproveBody: {
+            framework?: components["schemas"]["Framework"] | null;
+        };
         /** Check */
         Check: {
             /** Id */
@@ -323,6 +512,73 @@ export interface components {
             /** Jupyter Port */
             jupyter_port: number;
         };
+        /** DiagnosticDomain */
+        DiagnosticDomain: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Done */
+            done: boolean;
+            /** Probes */
+            probes: components["schemas"]["ProbeResult"][];
+        };
+        /** DiagnosticView */
+        DiagnosticView: {
+            /** Done */
+            done: boolean;
+            pending: components["schemas"]["ProbeView"] | null;
+            /** Tiers */
+            tiers: {
+                [key: string]: number;
+            } | null;
+            /** Domains */
+            domains: components["schemas"]["DiagnosticDomain"][];
+        };
+        /** Framework */
+        Framework: {
+            /** Domain Pack */
+            domain_pack: string;
+            /**
+             * Version
+             * @default 1
+             */
+            version: number;
+            /** Domains */
+            domains: components["schemas"]["FrameworkDomain"][];
+        };
+        /** FrameworkDomain */
+        FrameworkDomain: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Scope
+             * @default
+             */
+            scope: string;
+            /**
+             * Subskills
+             * @default []
+             */
+            subskills: string[];
+            /** Tiers */
+            tiers: {
+                [key: string]: string;
+            };
+        };
+        /** FrameworkView */
+        FrameworkView: {
+            /** Frozen */
+            frozen: boolean;
+            framework: components["schemas"]["Framework"] | null;
+        };
+        /** GoalsBody */
+        GoalsBody: {
+            /** Text */
+            text: string;
+        };
         /** GuiRequest */
         GuiRequest: {
             /**
@@ -352,6 +608,24 @@ export interface components {
         Health: {
             /** Status */
             status: string;
+        };
+        /** InterviewTurn */
+        InterviewTurn: {
+            /** Answer */
+            answer?: string | null;
+        };
+        /** InterviewView */
+        InterviewView: {
+            /** Done */
+            done: boolean;
+            /** Questions Asked */
+            questions_asked: number;
+            /** Max Questions */
+            max_questions: number;
+            /** Last Message */
+            last_message: string | null;
+            /** Goals */
+            goals: string | null;
         };
         /** Job */
         Job: {
@@ -401,6 +675,37 @@ export interface components {
              * @default true
              */
             open_browser: boolean;
+        };
+        /** OnboardingState */
+        OnboardingState: {
+            /** Stage */
+            stage: string;
+            /** Goals */
+            goals: boolean;
+            /** Framework Frozen */
+            framework_frozen: boolean;
+            /** Diagnostic Done */
+            diagnostic_done: boolean;
+        };
+        /** ProbeResult */
+        ProbeResult: {
+            /** Tier */
+            tier: number;
+            /** Subskill */
+            subskill: string;
+            /** Score */
+            score: number;
+        };
+        /** ProbeView */
+        ProbeView: {
+            /** Domain */
+            domain: string;
+            /** Tier */
+            tier: number;
+            /** Subskill */
+            subskill: string;
+            /** Question */
+            question: string;
         };
         /** RunRequest */
         RunRequest: {
@@ -677,6 +982,293 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getOnboardingState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingState"];
+                };
+            };
+        };
+    };
+    getInterview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewView"];
+                };
+            };
+        };
+    };
+    interviewTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InterviewTurn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    putGoals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getFramework: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FrameworkView"];
+                };
+            };
+        };
+    };
+    saveFrameworkDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Framework"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FrameworkView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    draftFramework: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FrameworkView"];
+                };
+            };
+        };
+    };
+    approveFramework: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FrameworkView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getDiagnostic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagnosticView"];
+                };
+            };
+        };
+    };
+    diagnosticNext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagnosticView"];
+                };
+            };
+        };
+    };
+    diagnosticAnswer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerResult"];
                 };
             };
             /** @description Validation Error */

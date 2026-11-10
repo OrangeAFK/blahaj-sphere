@@ -1,0 +1,12 @@
+{
+ "json": {
+  "message": "Thanks, that is everything I need.",
+  "done": true,
+  "goals": {
+   "target_capability": "Design a 60 GHz LNA",
+   "motivation": "PhD project",
+   "hours_per_week": "8",
+   "background": "Analog IC course, ngspice"
+  }
+ }
+}

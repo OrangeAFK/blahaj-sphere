@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type Settings } from './api/client'
 import { JobsTray } from './JobsTray'
+import { Onboarding } from './Onboarding'
 import { Preflight } from './Preflight'
 import { Toolchain } from './Toolchain'
 
@@ -48,6 +49,7 @@ export default function App() {
           {saved && <span className="ml-2 text-sm text-green-600">Saved</span>}
         </div>
       )}
+      <Onboarding />
       <Preflight />
       <Toolchain />
       <JobsTray />

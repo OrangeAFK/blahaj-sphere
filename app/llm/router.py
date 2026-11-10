@@ -40,7 +40,8 @@ class Router:
         self, task_type, messages, schema=None, cwd=None, tools=None, *,
         node_id=None, mcp_config=None, library_text=False,
     ) -> Result:
-        req = Request(task_type, messages, schema, cwd, tools, node_id, mcp_config)
+        route = self.config.tasks.get(task_type)
+        req = Request(task_type, messages, schema, cwd, tools, node_id, mcp_config, light=bool(route and route.light))
         return self._run(req, library_text)
 
     def _run(self, req: Request, library_text: bool = False, queue: bool = True) -> Result:

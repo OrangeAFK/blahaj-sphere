@@ -25,6 +25,8 @@ class Domain:
     fixes: dict[str, Callable[[JobManager], Job]] = field(default_factory=dict)  # preflight fix_action -> starts a job
     # Release-gate checker runner (app/builder/gate.py): (node_dir, work_rel, out_rel, timeout_s) -> run dict.
     run_checker: Callable[[Path, str, str, float], dict] | None = None
+    # Default competency framework (SPEC §8.1) that onboarding's framework drafter adapts to the user's goals.
+    framework_template: Path | None = None
 
 
 def load_domain(name: str | None = None) -> Domain | None:

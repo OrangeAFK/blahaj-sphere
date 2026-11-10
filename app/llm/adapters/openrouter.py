@@ -21,7 +21,7 @@ class OpenRouterAdapter:
         check_free_model(model)  # defense in depth; the router checks too, before counting
         key = self.api_key()
         if not key:
-            raise LLMError("OpenRouter API key not set in settings")
+            raise RetryableError("OpenRouter API key not set in settings")  # lets the chain fall through to the claude_code fallback
         messages = list(req.messages)
         body: dict = {"model": model, "messages": messages}
         if req.schema is not None:

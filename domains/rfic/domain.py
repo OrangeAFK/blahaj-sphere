@@ -57,4 +57,5 @@ DOMAIN = Domain(
     checks=_image_check,
     fixes={"build_image": _build_image_fix},
     run_checker=run_checker,
+    framework_template=Path(__file__).parent / "framework_template.yaml",
 )

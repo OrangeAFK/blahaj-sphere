@@ -31,11 +31,12 @@ x-grading: &grading
     - {backend: claude_code, model: claude-sonnet-5-5}   # pinned grader (§8.5)
 
 x-light: &light
+  light: true              # claude_code entries run minimal-overhead (replaced system prompt, no tools/MCP); DECISIONS M4
   chain:
     - {backend: openrouter, model: "google/gemma-4-31b-it:free"}
     - {backend: openrouter, model: "nvidia/nemotron-3-ultra-550b-a55b:free"}
     - {backend: openrouter, model: "openrouter/free"}
-    - {backend: claude_code}
+    - {backend: claude_code, model: claude-haiku-5-5}
 
 tasks:
   plan_branches: *heavy

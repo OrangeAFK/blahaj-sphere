@@ -27,6 +27,7 @@ class Request:
     tools: list[str] | None = None
     node_id: int | None = None
     mcp_config: str | None = None
+    light: bool = False  # light-tier task: claude_code runs with a replaced system prompt, no tools, no MCP
 
 
 @dataclass
