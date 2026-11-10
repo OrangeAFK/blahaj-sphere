@@ -5,6 +5,7 @@ import App from './App'
 afterEach(() => vi.restoreAllMocks())
 
 test('shows health and settings', async () => {
+  vi.stubGlobal('EventSource', class { addEventListener() {} close() {} })  // JobsTray subscribes on mount
   vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
     ok: true,
     json: async () => (url.endsWith('/health')
