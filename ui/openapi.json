@@ -97,10 +97,513 @@
           }
         }
       }
+    },
+    "/api/jobs": {
+      "get": {
+        "summary": "List Jobs",
+        "operationId": "listJobs",
+        "parameters": [
+          {
+            "name": "active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Active"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Job"
+                  },
+                  "title": "Response Listjobs"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/stream": {
+      "get": {
+        "summary": "Stream Jobs",
+        "description": "Server-sent events: `event: job` with a Job JSON payload, first a snapshot then every change.",
+        "operationId": "streamJobs",
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "summary": "Get Job",
+        "operationId": "getJob",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/preflight": {
+      "get": {
+        "summary": "Get Preflight",
+        "description": "Run all preflight checks (first run + Settings screen).",
+        "operationId": "getPreflight",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Check"
+                  },
+                  "type": "array",
+                  "title": "Response Getpreflight"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/preflight/fix/{action}": {
+      "post": {
+        "summary": "Run Fix",
+        "description": "Start the job behind a check's `fix_action` (e.g. build the toolchain image).",
+        "operationId": "runPreflightFix",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rfic/container": {
+      "get": {
+        "summary": "Container Status",
+        "operationId": "getRficContainer",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rfic/container/start": {
+      "post": {
+        "summary": "Container Start",
+        "operationId": "startRficContainer",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rfic/container/stop": {
+      "post": {
+        "summary": "Container Stop",
+        "operationId": "stopRficContainer",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rfic/gui": {
+      "post": {
+        "summary": "Launch Gui",
+        "description": "Start a GUI tool on the container's VNC display and open noVNC in the system browser.",
+        "operationId": "launchRficGui",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuiRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rfic/jupyter": {
+      "post": {
+        "summary": "Launch Jupyter",
+        "operationId": "launchRficJupyter",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JupyterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rfic/image/build": {
+      "post": {
+        "summary": "Build Image",
+        "operationId": "buildRficImage",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rfic/run": {
+      "post": {
+        "summary": "Run Sim",
+        "description": "Run a sim as a job (streams to /api/jobs/stream). Path rules as for the MCP tools, pinned to `node`.",
+        "operationId": "runRficSim",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Check": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warn",
+              "fail"
+            ],
+            "title": "Status"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          },
+          "fix": {
+            "type": "string",
+            "title": "Fix",
+            "default": ""
+          },
+          "fix_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fix Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "status"
+        ],
+        "title": "Check"
+      },
+      "ContainerStatus": {
+        "properties": {
+          "image": {
+            "type": "string",
+            "title": "Image"
+          },
+          "image_present": {
+            "type": "boolean",
+            "title": "Image Present"
+          },
+          "container": {
+            "type": "string",
+            "title": "Container"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "nodes_root": {
+            "type": "string",
+            "title": "Nodes Root"
+          },
+          "gui_port": {
+            "type": "integer",
+            "title": "Gui Port"
+          },
+          "jupyter_port": {
+            "type": "integer",
+            "title": "Jupyter Port"
+          }
+        },
+        "type": "object",
+        "required": [
+          "image",
+          "image_present",
+          "container",
+          "running",
+          "nodes_root",
+          "gui_port",
+          "jupyter_port"
+        ],
+        "title": "ContainerStatus"
+      },
+      "GuiRequest": {
+        "properties": {
+          "tool": {
+            "type": "string",
+            "enum": [
+              "xschem",
+              "klayout",
+              "qucs-s",
+              "desktop"
+            ],
+            "title": "Tool",
+            "default": "xschem"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "pdk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdk"
+          },
+          "open_browser": {
+            "type": "boolean",
+            "title": "Open Browser",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "GuiRequest"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -127,6 +630,175 @@
         ],
         "title": "Health"
       },
+      "Job": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress",
+            "default": 0.0
+          },
+          "log_tail": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Log Tail",
+            "default": []
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "external": {
+            "type": "boolean",
+            "title": "External",
+            "default": false
+          },
+          "created_ns": {
+            "type": "integer",
+            "title": "Created Ns"
+          },
+          "started_ns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started Ns"
+          },
+          "finished_ns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished Ns"
+          },
+          "updated_ns": {
+            "type": "integer",
+            "title": "Updated Ns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "status",
+          "created_ns",
+          "updated_ns"
+        ],
+        "title": "Job"
+      },
+      "JupyterRequest": {
+        "properties": {
+          "node": {
+            "type": "string",
+            "title": "Node"
+          },
+          "open_browser": {
+            "type": "boolean",
+            "title": "Open Browser",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "node"
+        ],
+        "title": "JupyterRequest"
+      },
+      "RunRequest": {
+        "properties": {
+          "tool": {
+            "type": "string",
+            "enum": [
+              "ngspice",
+              "openems",
+              "python"
+            ],
+            "title": "Tool"
+          },
+          "node": {
+            "type": "string",
+            "title": "Node"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "pdk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdk"
+          },
+          "timeout_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Min"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool",
+          "node",
+          "path"
+        ],
+        "title": "RunRequest"
+      },
       "Settings": {
         "properties": {
           "openrouter_api_key": {
@@ -147,6 +819,19 @@
         },
         "type": "object",
         "title": "Settings"
+      },
+      "UrlResponse": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "UrlResponse"
       },
       "ValidationError": {
         "properties": {
