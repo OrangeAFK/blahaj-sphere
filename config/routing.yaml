@@ -1,0 +1,47 @@
+# LLM routing (SPEC §3). User-editable. Each task_type has an ordered chain; the router
+# tries entries in order, failing over on 429/5xx/timeout. Empty `model` = backend default
+# (claude_code: the `claude_model` setting, else the CLI default).
+# openrouter entries must be free: IDs ending ":free" or exactly "openrouter/free" (DECISIONS M1).
+
+timeout_s:
+  claude_code: 900
+  cursor_cli: 900
+  openrouter: 60
+
+# OpenRouter limits free models per ACCOUNT (20 req/min; 50/day under 10 credits), so a
+# backend-wide cap sits on top of the per-model cap. Counters reset at local midnight.
+default_daily_cap: 50
+backend_daily_caps:
+  openrouter: 50
+
+x-heavy: &heavy
+  chain:
+    - {backend: claude_code}
+    - {backend: cursor_cli}
+
+x-grading: &grading
+  grading: true            # never fails over to a different model; failures go to the grading queue (§3.1)
+  chain:
+    - {backend: claude_code, model: claude-sonnet-5-5}   # pinned grader (§8.5)
+
+x-light: &light
+  chain:
+    - {backend: openrouter, model: "google/gemma-4-31b-it:free"}
+    - {backend: openrouter, model: "nvidia/nemotron-3-ultra-550b-a55b:free"}
+    - {backend: openrouter, model: "openrouter/free"}
+    - {backend: claude_code}
+
+tasks:
+  plan_branches: *heavy
+  build_challenge: *heavy
+  draft_framework: *heavy
+  rescope: *heavy
+  grade_oral: *grading
+  grade_prelab_explain: *grading
+  grade_diagnostic: *grading
+  grade_tier_exam: *grading
+  interview: *light
+  tutor_chat: *light
+  oral_dialogue: *light
+  diagnostic_dialogue: *light
+  summarize: *light
