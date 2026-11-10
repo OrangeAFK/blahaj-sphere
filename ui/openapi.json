@@ -76,6 +76,27 @@
           }
         }
       }
+    },
+    "/api/llm/usage": {
+      "get": {
+        "summary": "Get Llm Usage",
+        "description": "Today's per-model request counts and the number of grades awaiting retry.",
+        "operationId": "getLlmUsage",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Getllmusage"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
