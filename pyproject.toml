@@ -1,0 +1,19 @@
+[project]
+name = "blahajsphere"
+version = "0.1.0"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "pywebview",
+  "sqlmodel",
+  "pyyaml",
+  "httpx",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
