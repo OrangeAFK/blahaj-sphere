@@ -19,6 +19,12 @@ x-heavy: &heavy
     - {backend: claude_code}
     - {backend: cursor_cli}
 
+# Builder model pinned by the M2.5 spike (DECISIONS): Sonnet 5.5 passed the gate 3/3 with 0 retries.
+x-builder: &builder
+  chain:
+    - {backend: claude_code, model: claude-sonnet-5-5}
+    - {backend: cursor_cli}
+
 x-grading: &grading
   grading: true            # never fails over to a different model; failures go to the grading queue (§3.1)
   chain:
@@ -33,7 +39,7 @@ x-light: &light
 
 tasks:
   plan_branches: *heavy
-  build_challenge: *heavy
+  build_challenge: *builder
   draft_framework: *heavy
   rescope: *heavy
   grade_oral: *grading

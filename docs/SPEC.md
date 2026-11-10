@@ -225,7 +225,7 @@ ladders:
 - **[VERIFY at M0]** openEMS performance on a Windows-path bind mount vs. a WSL2-native path; if > 2× slower, place `data/` inside the WSL2 filesystem and record it.
 
 ### 6.2 MCP server (`domains/rfic/tools_mcp/`, stdio, heavy agents only)
-`run_ngspice(netlist)`, `run_openems(script, timeout_min)`, `run_python(path)`, `run_checker(node, target: workspace|reference)`, `parse_touchstone(path) -> {f, S}`, `list_pdk_models(pdk)`, `write_file`, `read_file` (sandboxed to the node dir).
+`run_ngspice(netlist)`, `run_openems(script, timeout_min)`, `run_python(path)`, `run_checker(node, target: workspace|reference)`, `parse_touchstone(path) -> {f, S}`, `list_pdk_models(pdk)`, `write_file`, `read_file`, `delete_file(path, recursive)` (sandboxed to the node dir; `delete_file` refuses the node dir, `workspace/`, `_hidden/` and `_hidden/reference_solution/` themselves). Heavy agents get no host file access: `claude -p` runs with `--disallowedTools Glob,Grep,Read`.
 
 ### 6.3 Job system
 All long work (build, sim, checker, grading, ingest, image pull, summarize) runs as **jobs**: in-process asyncio worker, `jobs` table (id, type, node_id, status queued|running|done|failed, progress 0–1, log tail). UI subscribes via SSE `/api/jobs/stream`; any screen shows active jobs in a tray.

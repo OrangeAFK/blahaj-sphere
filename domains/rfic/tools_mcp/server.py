@@ -62,7 +62,8 @@ TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "run_checker",
-        "description": "Run the node's checker against the learner `workspace` or the answer-key `reference`; returns its result.",
+        "description": "Run the node's checker.py (`--work <dir> --out <json>`, node PDK env) against the learner `workspace` or the "
+        "`reference` (_hidden/reference_solution). Returns verdict pass|fail|error (exit 0/1/2), the parsed result JSON, and output tails.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -111,6 +112,17 @@ TOOL_SPECS: list[dict[str, Any]] = [
             "required": ["path", "content"],
         },
         "method": "write_file",
+    },
+    {
+        "name": "delete_file",
+        "description": "Delete a file inside the node directory (scratch files, stale simulation outputs). Directories need recursive=true. "
+        "The node dir, workspace/, _hidden/ and _hidden/reference_solution/ themselves cannot be deleted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": _PATH}, "recursive": {"type": "boolean", "description": "Delete a directory tree."}},
+            "required": ["path"],
+        },
+        "method": "delete_file",
     },
     {
         "name": "read_file",

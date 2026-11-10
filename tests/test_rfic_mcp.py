@@ -43,7 +43,8 @@ def test_initialize_negotiates_version_and_advertises_tools(tools):
 
 def test_tools_list_has_all_spec_tools_with_schemas(tools):
     names = [t["name"] for t in rpc(McpServer(tools), "tools/list")["result"]["tools"]]
-    assert names == ["run_ngspice", "run_openems", "run_python", "run_checker", "parse_touchstone", "list_pdk_models", "write_file", "read_file"]
+    assert names == ["run_ngspice", "run_openems", "run_python", "run_checker", "parse_touchstone", "list_pdk_models", "write_file",
+                     "delete_file", "read_file"]  # fmt: skip
     for t in TOOL_SPECS:
         assert t["inputSchema"]["type"] == "object" and t["description"]
         assert set(t["inputSchema"]["required"]) <= set(t["inputSchema"]["properties"])
@@ -198,19 +199,92 @@ def test_run_python_passes_args_and_headless_matplotlib(tools, fake, nodes_root)
     assert c["argv"] == ["python3", "-u", "/work/nodes/n1/workspace/p.py", "--n", "3"] and c["env"]["MPLBACKEND"] == "Agg"
 
 
-def test_run_checker_is_provisional_but_finds_and_parses(tools, fake, nodes_root):
+def _checker_writes(fake, nodes_root, payload):
+    """exec_hook: act like checker.py, writing `payload` to the --out file."""
+
+    def hook(argv, workdir):
+        out = argv[argv.index("--out") + 1]
+        p = fake.to_host(out)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(payload))
+
+    fake.exec_hook = hook
+
+
+def test_run_checker_follows_spec_5_2_contract(tools, fake, nodes_root):
+    n1 = nodes_root / "n1"
     with pytest.raises(ToolError, match="no checker"):
         tools.run_checker("n1", "workspace")
-    (nodes_root / "n1" / "checker.py").write_text("x")
-    fake.next_result = ExecResult(0, '{"passed": true, "metrics": {"gain_db": 20}}', "")
+    (n1 / "checker.py").write_text("x")
+    (n1 / "node.md").write_text("---\nid: 1\npdk: sky130\n---\nbrief\n")
+    (n1 / "_hidden" / "reference_solution").mkdir(parents=True)
+    _checker_writes(fake, nodes_root, {"pass": True, "tests": [], "metrics": {"gain_db": 20}, "runtime_s": 1.0})
     out = tools.run_checker(target="reference")
-    assert out["result"] == {"passed": True, "metrics": {"gain_db": 20}} and out["target"] == "reference"
-    assert fake.exec_calls[0]["argv"][-2:] == ["--target", "reference"]
-    assert fake.exec_calls[0]["workdir"] == "/work/nodes/n1"
+    assert out["verdict"] == "pass" and out["ok"] and out["result"]["metrics"] == {"gain_db": 20}
+    c = fake.exec_calls[0]
+    assert c["argv"] == ["python3", "-u", "/work/nodes/n1/checker.py", "--work", "/work/nodes/n1/_hidden/reference_solution",
+                         "--out", "/work/nodes/n1/_hidden/.checker/reference_result.json"]  # fmt: skip
+    assert c["workdir"] == "/work/nodes/n1" and c["pdk"] == "sky130A"
+
+    fake.next_result = ExecResult(1, "", "")
+    assert tools.run_checker(target="workspace")["verdict"] == "fail"
+    assert fake.exec_calls[-1]["argv"][4] == "/work/nodes/n1/workspace"
+    fake.next_result = ExecResult(2, "", "missing tool")
+    assert tools.run_checker(target="workspace")["verdict"] == "error"
+    fake.exec_hook = None  # exit 0 without a result file is an error, not a pass
+    (n1 / ".checker" / "workspace_result.json").unlink()
+    fake.next_result = ExecResult(0, "", "")
+    out = tools.run_checker(target="workspace")
+    assert out["verdict"] == "error" and "no result file" in out["problem"]
     with pytest.raises(ToolError):
         tools.run_checker("n2", "workspace")  # pinned to n1
     with pytest.raises(ToolError):
         tools.run_checker("n1", "everything")
+    with pytest.raises(ToolError, match="inside the node"):
+        tools.run_checker_at("n1", "../n2/workspace", "x.json", 10)
+
+
+def test_reference_solution_files_run_in_their_own_dir(tools, fake, nodes_root):
+    ref = nodes_root / "n1" / "_hidden" / "reference_solution"
+    ref.mkdir(parents=True)
+    (ref / "a.sp").write_text("x")
+    (nodes_root / "n1" / "workspace" / "a.sp").write_text("x")
+    tools.run_ngspice("_hidden/reference_solution/a.sp")
+    tools.run_ngspice("workspace/a.sp")
+    assert [c["workdir"] for c in fake.exec_calls] == ["/work/nodes/n1/_hidden/reference_solution", "/work/nodes/n1/workspace"]
+
+
+def test_delete_file_is_sandboxed_and_protects_layout(tools, nodes_root):
+    n1 = nodes_root / "n1"
+    (n1 / "workspace" / "peek.py").write_text("x")
+    (n1 / "workspace" / "sim" / "a").mkdir(parents=True)
+    (n1 / "workspace" / "sim" / "a" / "et").write_text("x")
+    (n1 / "_hidden" / "reference_solution").mkdir(parents=True)
+    (nodes_root / "n2" / "keep.txt").write_text("x")
+    s = McpServer(tools)
+    assert call(s, "delete_file", {"path": "workspace/peek.py"}) == (False, {"deleted": "workspace/peek.py", "files": 1})
+    assert not (n1 / "workspace" / "peek.py").exists()
+    is_err, body = call(s, "delete_file", {"path": "workspace/sim"})
+    assert is_err and "recursive" in body["error"]
+    assert call(s, "delete_file", {"path": "workspace/sim", "recursive": True})[1]["files"] == 1
+    for protected in (".", "workspace", "_hidden", "_hidden/reference_solution", "workspace/../_hidden"):
+        is_err, body = call(s, "delete_file", {"path": protected, "recursive": True})
+        assert is_err and "protected" in body["error"], protected
+    for outside in ("../n2/keep.txt", "n2/keep.txt", "/etc/passwd", "/work/nodes/n2/keep.txt"):
+        assert call(s, "delete_file", {"path": outside})[0], outside
+    assert (nodes_root / "n2" / "keep.txt").exists() and (n1 / "workspace").is_dir()
+    assert call(s, "delete_file", {"path": "workspace/nope"})[0]
+
+
+def test_run_checker_pdk_none_and_bad_pdk(tools, fake, nodes_root):
+    n1 = nodes_root / "n1"
+    (n1 / "checker.py").write_text("x")
+    (n1 / "node.md").write_text("---\npdk: none\n---\n")
+    tools.run_checker(target="workspace")
+    assert fake.exec_calls[-1]["pdk"] is None
+    (n1 / "node.md").write_text("---\npdk: gf180\n---\n")
+    with pytest.raises(ToolError, match="pdk must be one of"):
+        tools.run_checker(target="workspace")
 
 
 def test_parse_touchstone_and_pdk_listing_wrap_container_python(tools, fake, nodes_root):

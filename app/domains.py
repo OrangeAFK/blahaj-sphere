@@ -3,6 +3,7 @@
 import importlib
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from fastapi import APIRouter
@@ -22,6 +23,8 @@ class Domain:
     router: APIRouter | None = None
     checks: Callable[[], list[Check]] = lambda: []  # domain-specific preflight checks
     fixes: dict[str, Callable[[JobManager], Job]] = field(default_factory=dict)  # preflight fix_action -> starts a job
+    # Release-gate checker runner (app/builder/gate.py): (node_dir, work_rel, out_rel, timeout_s) -> run dict.
+    run_checker: Callable[[Path, str, str, float], dict] | None = None
 
 
 def load_domain(name: str | None = None) -> Domain | None:

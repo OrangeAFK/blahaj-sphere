@@ -167,11 +167,14 @@ def test_claude_env_stripped(monkeypatch):
 
 def test_claude_cmd_flags():
     a = ClaudeCodeAdapter(binary="claude")
-    cmd = a.build_cmd(Request("t", MSG, tools=["Read", "Bash(ls:*)"], mcp_config="m.json"), "claude-x")
+    cmd = a.build_cmd(Request("t", MSG, tools=["mcp__rfic__run_ngspice", "Bash(ls:*)"], mcp_config="m.json"), "claude-x")
     assert cmd[:2] == ["claude", "-p"]
     assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
     assert cmd[cmd.index("--model") + 1] == "claude-x"
-    assert cmd[cmd.index("--allowedTools") + 1] == "Read,Bash(ls:*)"
+    assert cmd[cmd.index("--allowedTools") + 1] == "mcp__rfic__run_ngspice,Bash(ls:*)"
+    assert cmd[cmd.index("--disallowedTools") + 1] == "Glob,Grep,Read"  # dontAsk lets read-only built-ins through otherwise
+    with pytest.raises(LLMError, match="always disallowed"):
+        a.build_cmd(Request("t", MSG, tools=["Read"]), "")
     assert "--strict-mcp-config" in cmd and cmd[cmd.index("--output-format") + 1] == "json"
 
 

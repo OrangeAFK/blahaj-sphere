@@ -10,9 +10,11 @@ import json
 import os
 import posixpath
 import re
+import shutil
 from pathlib import Path
 from typing import Callable
 
+from app.builder.nodefile import NodeFileError, read_node_md
 from app.jobs.store import JobHandle, JobStore
 from domains.rfic.container import CONTAINER_NODES, ContainerError, ContainerManager, ExecResult, PathError
 
@@ -30,8 +32,31 @@ OPENEMS_REAL_STEP_LIMIT = 10_000_000
 OPENEMS_ASSUMED_END_DB = 60.0
 
 
+CHECKER_TARGETS = {"workspace": "workspace", "reference": "_hidden/reference_solution"}  # SPEC §4.1
+# Reference metrics are the prelab answers, so that result must stay under _hidden/ (DECISIONS M2.5).
+CHECKER_OUT = {"workspace": ".checker/workspace_result.json", "reference": "_hidden/.checker/reference_result.json"}
+# node.md `pdk` (SPEC §5.1) -> PDK name in the container; `none` = no PDK env.
+PDK_ALIASES = {"sky130": "sky130A", "ihp-sg13g2": "ihp-sg13g2", "none": None}
+
+
 class ToolError(Exception):
     """Reported to the agent as an `isError` tool result, never as a protocol error."""
+
+
+def node_pdk(node_host: Path) -> str | None:
+    """Container PDK for a node, from its node.md frontmatter (None when absent or `none`)."""
+    md = node_host / "node.md"
+    if not md.is_file():
+        return None
+    try:
+        pdk = read_node_md(md)[0].get("pdk")
+    except NodeFileError as e:
+        raise ToolError(str(e)) from None
+    if pdk is None:
+        return None
+    if str(pdk) not in PDK_ALIASES:
+        raise ToolError(f"node.md pdk must be one of {sorted(PDK_ALIASES)}, got {pdk!r}")
+    return PDK_ALIASES[str(pdk)]
 
 
 def _tail(text: str, n: int = TAIL_CHARS) -> str:
@@ -214,6 +239,12 @@ class RficTools:
         changed = sorted(k for k, v in after.items() if before.get(k) != v)
         return res, changed
 
+    def _workdir_for(self, c: str) -> str | None:
+        """Files in the reference solution run there, so their relative outputs never land in the
+        learner's workspace; everything else runs in workspace/ (SPEC §4.2)."""
+        ref = f"{CONTAINER_NODES}/{self.containers.node_of(c)}/{CHECKER_TARGETS['reference']}"
+        return ref if c.startswith(ref + "/") else None
+
     @staticmethod
     def _timeout_s(timeout_min: float | None, default_min: float) -> float:
         m = default_min if timeout_min is None else timeout_min
@@ -230,7 +261,8 @@ class RficTools:
         pdk = self._check_pdk(pdk)
         log_c = posixpath.splitext(c)[0] + ".log"
         res, changed = self._run(
-            "sim.ngspice", node, ["ngspice", "-b", "-o", log_c, c], timeout_s=self._timeout_s(timeout_min, 10), pdk=pdk, job=job
+            "sim.ngspice", node, ["ngspice", "-b", "-o", log_c, c], timeout_s=self._timeout_s(timeout_min, 10), pdk=pdk, job=job,
+            workdir=self._workdir_for(c),
         )
         log_host = self.containers.to_host(log_c)
         log_text = log_host.read_text(encoding="utf-8", errors="replace") if log_host.is_file() else ""
@@ -270,7 +302,7 @@ class RficTools:
 
         res, changed = self._run(
             "sim.openems", node, ["python3", "-u", c], timeout_s=self._timeout_s(timeout_min, 15),
-            env={"PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg"}, job=job, on_line=on_line,
+            env={"PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg"}, job=job, on_line=on_line, workdir=self._workdir_for(c),
         )  # fmt: skip
         return {
             "ok": res.returncode == 0,
@@ -287,7 +319,7 @@ class RficTools:
         node = self.containers.node_of(c)
         res, changed = self._run(
             "sim.python", node, ["python3", "-u", c, *(args or [])], timeout_s=self._timeout_s(timeout_min, 10),
-            env={"PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg"}, job=job,
+            env={"PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg"}, job=job, workdir=self._workdir_for(c),
         )  # fmt: skip
         return {
             "ok": res.returncode == 0,
@@ -299,39 +331,67 @@ class RficTools:
         }
 
     def run_checker(self, node: str | None = None, target: str = "workspace", timeout_min: float | None = None, job: JobHandle | None = None) -> dict:
-        """Run the node's checker against `workspace` (the learner's work) or `reference` (the answer key).
-
-        PROVISIONAL: the checker contract (SPEC §5.2) is not part of M2's scope. This runs
-        `python3 <node>/checker.py --target <target>` (fallback `checker/check.py`) from the node
-        directory and returns its stdout, parsed as JSON when possible. M2.5 reconciles this with §5.2."""
-        if target not in ("workspace", "reference"):
+        """Run the node's checker (SPEC §5.2) against `workspace` (the learner's work) or `reference`
+        (`_hidden/reference_solution`). Output goes to CHECKER_OUT; the gate-owned
+        `_hidden/ref_result.json` is written only by the release gate."""
+        if target not in CHECKER_TARGETS:
             raise ToolError("target must be 'workspace' or 'reference'")
         node = node or self.node
         if not node:
             raise ToolError("node is required")
         if self.node and node != self.node:
             raise ToolError(f"this server is pinned to node {self.node}")
+        out = self.run_checker_at(node, CHECKER_TARGETS[target], CHECKER_OUT[target], self._timeout_s(timeout_min, 30), job=job)
+        return {"ok": out["verdict"] == "pass", "target": target, **out}
+
+    def run_checker_at(self, node: str, work_rel: str, out_rel: str, timeout_s: float, job: JobHandle | None = None) -> dict:
+        """`python3 checker.py --work <work> --out <out>` from the node dir with the node's PDK env.
+
+        Paths are relative to the node dir. Exit 0/1/2 -> verdict pass/fail/error (§5.2); a timeout
+        or a missing/unparseable result file is also `error`."""
         node_c = self._cpath(node)
+        if posixpath.dirname(node_c) != CONTAINER_NODES:
+            raise ToolError(f"not a node directory: {node}")
         node_host = self.containers.to_host(node_c)
-        script = next((p for p in (node_host / "checker.py", node_host / "checker" / "check.py") if p.is_file()), None)
-        if script is None:
-            raise ToolError(f"no checker found in {node}: looked for checker.py and checker/check.py")
-        script_c = self.containers.to_container(script)
-        res, changed = self._run(
-            "checker", node, ["python3", "-u", script_c, "--target", target], timeout_s=self._timeout_s(timeout_min, 10),
-            env={"PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg"}, job=job, workdir=node_c,
+        if not (node_host / "checker.py").is_file():
+            raise ToolError(f"no checker.py in {node}")
+        work_c, out_c = (posixpath.normpath(f"{node_c}/{r}") for r in (work_rel, out_rel))
+        if not all(c.startswith(node_c + "/") for c in (work_c, out_c)):
+            raise ToolError("work and out paths must stay inside the node directory")
+        work_host, out_host = self.containers.to_host(work_c), self.containers.to_host(out_c)
+        if not work_host.is_dir():
+            raise ToolError(f"work dir not found: {work_rel}")
+        out_host.parent.mkdir(parents=True, exist_ok=True)
+        out_host.unlink(missing_ok=True)
+        pdk = node_pdk(node_host)
+        res, _ = self._run(
+            "checker", self.containers.node_of(node_c),
+            ["python3", "-u", f"{node_c}/checker.py", "--work", work_c, "--out", out_c],
+            timeout_s=timeout_s, pdk=pdk, env={"PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg"}, job=job, workdir=node_c,
         )  # fmt: skip
-        parsed = None
-        try:
-            parsed = json.loads(res.stdout)
-        except ValueError:
-            pass
+        result, problem = None, None
+        if out_host.is_file():
+            try:
+                result = json.loads(out_host.read_text(encoding="utf-8"))
+            except ValueError as e:
+                problem = f"result file is not valid JSON: {e}"
+        elif res.returncode in (0, 1):
+            problem = f"checker exited {res.returncode} but wrote no result file ({out_rel})"
+        if res.timed_out:
+            verdict = "error"
+            problem = f"checker timed out after {int(timeout_s)} s"
+        elif res.returncode in (0, 1) and problem is None:
+            verdict = "pass" if res.returncode == 0 else "fail"
+        else:
+            verdict = "error"
         return {
-            "ok": res.returncode == 0,
+            "verdict": verdict,
             "exit_code": res.returncode,
-            "target": target,
-            "result": parsed,
-            "stdout_tail": None if parsed is not None else _tail(res.stdout),
+            "seconds": res.seconds,
+            "pdk": pdk,
+            "result": result,
+            "problem": problem,
+            "stdout_tail": _tail(res.stdout, 3000),
             "stderr_tail": _tail(res.stderr, 3000),
         }
 
@@ -370,6 +430,26 @@ class RficTools:
         with open(host, "w", encoding="utf-8", newline="\n") as f:  # LF: scripts run in Linux
             f.write(content)
         return {"written": self._rel_to_node(host), "bytes": host.stat().st_size}
+
+    def delete_file(self, path: str, recursive: bool = False) -> dict:
+        """Delete a file (or, with recursive=True, a directory tree) inside the node directory.
+        The node directory itself and its top-level layout dirs (workspace/, _hidden/, the reference) are protected."""
+        c = self._cpath(path)
+        node_c = f"{CONTAINER_NODES}/{self.containers.node_of(c)}"
+        rel = posixpath.relpath(c, node_c)
+        if rel in (".", "workspace", "_hidden", CHECKER_TARGETS["reference"]):
+            raise ToolError(f"refusing to delete a protected node directory: {rel}")
+        host = self.containers.to_host(c)
+        if host.is_symlink() or host.is_file():
+            host.unlink()
+            return {"deleted": rel, "files": 1}
+        if host.is_dir():
+            if not recursive:
+                raise ToolError(f"{rel} is a directory; pass recursive=true to delete it")
+            n = sum(1 for p in host.rglob("*") if p.is_file())
+            shutil.rmtree(host)
+            return {"deleted": rel, "files": n}
+        raise ToolError(f"not found: {path}")
 
     def read_file(self, path: str, max_bytes: int = READ_MAX) -> dict:
         _, host = self._existing_file(path, "file")

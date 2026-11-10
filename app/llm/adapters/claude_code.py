@@ -18,7 +18,11 @@ STRIPPED_ENV = (
     "AWS_BEARER_TOKEN_BEDROCK",
 )
 
-_RATE_HINTS = ("rate limit", "usage limit", "limit reached", "overloaded", "429", "529")
+# `dontAsk` still lets read-only built-ins run without being allow-listed, which gave the Builder
+# read access to the host filesystem (DECISIONS M2.5). Agents reach files only through MCP tools.
+DISALLOWED_TOOLS = ("Glob", "Grep", "Read")
+
+_RATE_HINTS =("rate limit", "usage limit", "limit reached", "overloaded", "429", "529")
 
 
 def clean_env(env: dict[str, str] | None = None) -> dict[str, str]:
@@ -37,7 +41,9 @@ class ClaudeCodeAdapter:
         exe = self.binary or shutil.which("claude")
         if not exe:
             raise LLMError("claude CLI not found on PATH")
-        cmd = [exe, "-p", "--output-format", "json", "--permission-mode", "dontAsk"]
+        cmd = [exe, "-p", "--output-format", "json", "--permission-mode", "dontAsk", "--disallowedTools", ",".join(DISALLOWED_TOOLS)]
+        if req.tools and set(req.tools) & set(DISALLOWED_TOOLS):
+            raise LLMError(f"tools {sorted(set(req.tools) & set(DISALLOWED_TOOLS))} are always disallowed for claude_code")
         model = model or self.default_model()
         if model:
             cmd += ["--model", model]
