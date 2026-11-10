@@ -168,6 +168,7 @@ items:
     unit: ohm
     metric: Q_L                  # value extracted by code from ref_result.json.metrics
     tolerance: {rel: 0.15}       # or {abs: 2.0}
+    hand_estimate: 3.4           # numeric items: the Builder's hand calculation, same unit; gate requires tolerance >= 1.5 x |hand_estimate - value| (M5)
   - id: p2
     kind: explain
     subskill: smith_chart.navigation
