@@ -11,9 +11,12 @@ class Settings(BaseModel):
     claude_model: str = ""
 
 
+def data_dir() -> Path:
+    return Path(os.environ.get("BLAHAJ_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
+
+
 def settings_path() -> Path:
-    root = Path(os.environ.get("BLAHAJ_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
-    return root / "settings.json"
+    return data_dir() / "settings.json"
 
 
 def load_settings() -> Settings:
