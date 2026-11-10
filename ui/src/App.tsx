@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, type Settings } from './api/client'
+import { JobsTray } from './JobsTray'
+import { Preflight } from './Preflight'
+import { Toolchain } from './Toolchain'
 
 export default function App() {
   const [health, setHealth] = useState('...')
@@ -18,7 +21,7 @@ export default function App() {
   }
 
   return (
-    <main className="mx-auto max-w-xl p-8 font-sans">
+    <main className="mx-auto max-w-xl p-8 pb-48 font-sans">
       <h1 className="text-2xl font-bold">BlahajSphere</h1>
       <p className="text-sm text-gray-500">Backend: {health}</p>
       <h2 className="mt-6 text-lg font-semibold">Settings</h2>
@@ -45,6 +48,9 @@ export default function App() {
           {saved && <span className="ml-2 text-sm text-green-600">Saved</span>}
         </div>
       )}
+      <Preflight />
+      <Toolchain />
+      <JobsTray />
     </main>
   )
 }
