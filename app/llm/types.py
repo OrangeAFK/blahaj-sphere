@@ -10,6 +10,10 @@ class RetryableError(LLMError):
     """429 / 5xx / timeout: the router may try the next chain entry."""
 
 
+class RateLimited(RetryableError):
+    """HTTP 429 from a free model: the router puts that model on cooldown (DECISIONS M4.1)."""
+
+
 class ModelNotAllowed(LLMError):
     """Model ID rejected by the free-only allowlist."""
 

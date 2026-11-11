@@ -16,6 +16,7 @@ UNLOCK_MASTERY = 65.0
 UNLOCK_SUBSKILLS = 3
 EXAM_ITEMS = 6
 EXAM_PASS_MEAN = 2.3  # on the 0-3 item scale; no item may be 0
+MAX_INITIAL_TIER = 3  # a diagnostic never places above T3; higher tiers are earned through exams (DECISIONS M4.1)
 DIAGNOSTIC_PASS_MEAN = 2.0  # diagnostics have ~1 probe per tier, so the 6-item exam bar (2.3) would demand a perfect 3 (DECISIONS M4)
 
 INTERLEAVED_WEIGHT_MULT = 1.5
@@ -107,7 +108,7 @@ def initial_tier(diagnostic: Sequence[Event]) -> int:
     """Tier to start a domain at, from its diagnostic items (SPEC gives no rule; DECISIONS M3).
 
     A tier t is 'passed' if its diagnostic items meet the diagnostic bar (mean >= 2.0, none 0; DECISIONS M4). Start at one above the
-    highest tier t whose own and all lower tiers with items are passed; no diagnostic -> tier 1.
+    highest tier t whose own and all lower tiers with items are passed, capped at MAX_INITIAL_TIER (T3); no diagnostic -> tier 1.
     """
     by_tier: dict[int, list[float]] = {}
     for e in diagnostic:
@@ -117,7 +118,7 @@ def initial_tier(diagnostic: Sequence[Event]) -> int:
         if not diagnostic_tier_passed(by_tier[tier]):
             break
         t = tier
-    return min(MAX_TIER, max(MIN_TIER, t + 1))
+    return min(MAX_INITIAL_TIER, max(MIN_TIER, t + 1))
 
 
 @dataclass(frozen=True)

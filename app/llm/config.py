@@ -29,6 +29,7 @@ class RoutingConfig:
     timeout_s: dict[str, float] = field(default_factory=dict)
     backend_daily_caps: dict[str, int] = field(default_factory=dict)
     default_daily_cap: int = 50
+    rate_limit_cooldown_s: float = 1800  # a free model that returned 429 is skipped this long
 
     def timeout(self, backend: str) -> float:
         return self.timeout_s.get(backend, 900)
@@ -58,6 +59,7 @@ def parse_routing(data: dict) -> RoutingConfig:
         timeout_s={k: float(v) for k, v in (data.get("timeout_s") or {}).items()},
         backend_daily_caps={k: int(v) for k, v in (data.get("backend_daily_caps") or {}).items()},
         default_daily_cap=int(data.get("default_daily_cap", 50)),
+        rate_limit_cooldown_s=float(data.get("rate_limit_cooldown_s", 1800)),
     )
 
 

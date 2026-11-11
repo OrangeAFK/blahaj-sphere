@@ -20,7 +20,7 @@ from .framework import SUBSKILL, Framework, FrameworkStore, validation_message
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 MAX_QUESTIONS = 10
-MAX_PROBES_PER_DOMAIN = 3  # climb T1..T3 at most: ~2 probes on average, and the diagnostic never places above T4
+MAX_PROBES_PER_DOMAIN = 2  # probes at T1 and T2: passing both already places the domain at the T3 cap
 DIAG_NODE_ID = 0
 DIAG_NODE_SLUG = "diagnostic"
 GOAL_KEYS = ("target_capability", "motivation", "hours_per_week", "background")

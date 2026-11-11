@@ -4,7 +4,7 @@ import httpx
 
 from app.llm.adapters.util import parse_json
 from app.llm.allowlist import check_free_model
-from app.llm.types import LLMError, Request, Result, RetryableError
+from app.llm.types import LLMError, RateLimited, Request, Result, RetryableError
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -33,7 +33,9 @@ class OpenRouterAdapter:
                 r = c.post(self.url, json=body, headers={"Authorization": f"Bearer {key}"})
         except (httpx.TimeoutException, httpx.TransportError) as e:
             raise RetryableError(f"openrouter transport error: {e}") from e
-        if r.status_code == 429 or r.status_code >= 500:
+        if r.status_code == 429:
+            raise RateLimited(f"openrouter HTTP 429: {r.text[:300]}")
+        if r.status_code >= 500:
             raise RetryableError(f"openrouter HTTP {r.status_code}: {r.text[:300]}")
         if r.status_code != 200:
             raise LLMError(f"openrouter HTTP {r.status_code}: {r.text[:300]}")
@@ -43,7 +45,7 @@ class OpenRouterAdapter:
             raise RetryableError(f"openrouter returned non-JSON body: {r.text[:200]}") from e
         if "error" in data:  # OpenRouter sometimes returns 200 with an error body
             code = (data["error"] or {}).get("code")
-            cls = RetryableError if code in (429, 502, 503, 504, 408) else LLMError
+            cls = RateLimited if code == 429 else RetryableError if code in (502, 503, 504, 408) else LLMError
             raise cls(f"openrouter error: {data['error']}")
         try:
             text = data["choices"][0]["message"]["content"] or ""

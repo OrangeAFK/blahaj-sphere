@@ -24,6 +24,19 @@ STRIPPED_ENV = (
 # read access to the host filesystem (DECISIONS M2.5). Agents reach files only through MCP tools.
 DISALLOWED_TOOLS = ("Glob", "Grep", "Read")
 
+# Replacement system prompt for calls that have no tools: the default Claude Code prompt is ~25k tokens of tool
+# and coding guidance that these calls never use (DECISIONS M4, M4.1). Callers normally supply their own system message.
+MINIMAL_SYSTEM = (
+    "You are a precise assistant inside a tutoring application. Follow the instructions in the user message exactly "
+    "and reply only in the requested output format. You have no tools."
+)
+
+
+def is_minimal(req: Request) -> bool:
+    """Minimal-overhead invocation: light-tier tasks, and any call with neither tools nor MCP (grading, planning, ...)."""
+    return req.light or (not req.tools and not req.mcp_config)
+
+
 _RATE_HINTS =("rate limit", "usage limit", "limit reached", "overloaded", "429", "529")
 
 
@@ -55,7 +68,7 @@ class ClaudeCodeAdapter:
         exe = self.binary or shutil.which("claude")
         if not exe:
             raise LLMError("claude CLI not found on PATH")
-        if req.light:
+        if is_minimal(req):
             return self._light_cmd(exe, model, system_file)
         cmd = [exe, "-p", "--output-format", "json", "--permission-mode", "dontAsk", "--disallowedTools", ",".join(DISALLOWED_TOOLS)]
         if req.tools and set(req.tools) & set(DISALLOWED_TOOLS):
@@ -84,7 +97,7 @@ class ClaudeCodeAdapter:
         return cmd
 
     def complete(self, req: Request, model: str, timeout_s: float) -> Result:
-        if req.light:
+        if is_minimal(req):
             return self._complete_light(req, model, timeout_s)
         return self._run(self.build_cmd(req, model), flatten_messages(req.messages, req.schema), req, model, timeout_s)
 
@@ -92,10 +105,8 @@ class ClaudeCodeAdapter:
         system = "\n\n".join(m["content"] for m in req.messages if m.get("role") == "system")
         rest = [m for m in req.messages if m.get("role") != "system"]
         with tempfile.TemporaryDirectory(prefix="blahaj-light-") as d:  # empty cwd: no CLAUDE.md / project discovery
-            sf = None
-            if system:
-                sf = str(Path(d) / "system.txt")
-                Path(sf).write_text(system, encoding="utf-8", newline="\n")
+            sf = str(Path(d) / "system.txt")
+            Path(sf).write_text(system or MINIMAL_SYSTEM, encoding="utf-8", newline="\n")
             cmd = self.build_cmd(req, model, sf)
             return self._run(cmd, flatten_messages(rest, req.schema), req, model, timeout_s, cwd=d)
 

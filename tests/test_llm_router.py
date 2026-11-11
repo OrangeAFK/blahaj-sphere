@@ -4,14 +4,14 @@ import subprocess
 import httpx
 import pytest
 
-from app.llm.adapters.claude_code import STRIPPED_ENV, ClaudeCodeAdapter, clean_env
+from app.llm.adapters.claude_code import MINIMAL_SYSTEM, STRIPPED_ENV, ClaudeCodeAdapter, clean_env
 from app.llm.adapters.mock import MockAdapter
 from app.llm.adapters.openrouter import OpenRouterAdapter
 from app.llm.allowlist import is_free_model
 from app.llm.config import load_routing, parse_routing
 from app.llm.router import Router
 from app.llm.store import Store
-from app.llm.types import GradingUnavailable, LLMError, ModelNotAllowed, Request, RetryableError
+from app.llm.types import GradingUnavailable, LLMError, ModelNotAllowed, RateLimited, Request, RetryableError
 
 FREE_A = "google/gemma-4-31b-it:free"  # fixture: retryable 429
 FREE_B = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -284,3 +284,83 @@ def test_openrouter_without_key_falls_through_to_the_next_entry(tmp_path):
     adapters = {"openrouter": OpenRouterAdapter(api_key=lambda: ""), "mock": MockAdapter()}
     res = Router(cfg, Store(tmp_path / "llm.db"), adapters).complete("summarize", MSG)
     assert res.backend == "mock"
+
+
+def test_no_tool_heavy_calls_use_the_minimal_system_prompt(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        sf = cmd[cmd.index("--system-prompt-file") + 1] if "--system-prompt-file" in cmd else None
+        seen["system"] = open(sf, encoding="utf-8").read() if sf else None
+        out = {"result": "{}", "is_error": False, "modelUsage": {"m": {}}, "usage": {"input_tokens": 1, "output_tokens": 1}}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(out), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    a = ClaudeCodeAdapter(binary="claude")
+    a.complete(Request("grade_diagnostic", MSG), "claude-sonnet-5-5", 5)  # not light, but no tools and no MCP
+    assert seen["cmd"][seen["cmd"].index("--tools") + 1] == "" and seen["system"] == MINIMAL_SYSTEM
+    a.complete(Request("grade_diagnostic", [{"role": "system", "content": "GRADER"}, *MSG]), "claude-sonnet-5-5", 5)
+    assert seen["system"] == "GRADER"
+    # a call with tools (the Builder) keeps the full default invocation
+    a.complete(Request("build_challenge", MSG, tools=["mcp__rfic__run_ngspice"], mcp_config="m.json"), "claude-sonnet-5-5", 5)
+    assert "--tools" not in seen["cmd"] and "--system-prompt-file" not in seen["cmd"] and "--allowedTools" in seen["cmd"]
+
+
+class Always429:
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, req, model, timeout_s):
+        self.calls += 1
+        raise RateLimited("HTTP 429")
+
+
+def test_429_puts_a_free_model_on_30_min_cooldown(tmp_path):
+    now = [1000.0]
+    cfg = parse_routing({"tasks": {"summarize": {"chain": [
+        {"backend": "openrouter", "model": FREE_A}, {"backend": "mock", "model": "m"}]}}})
+    assert cfg.rate_limit_cooldown_s == 1800
+    limited = Always429()
+    r = Router(cfg, Store(tmp_path / "llm.db"), {"openrouter": limited, "mock": MockAdapter()}, clock=lambda: now[0])
+    assert r.complete("summarize", MSG).backend == "mock" and limited.calls == 1
+    now[0] += 1799
+    r.complete("summarize", MSG)
+    assert limited.calls == 1  # still cooling down: not even attempted
+    now[0] += 2
+    r.complete("summarize", MSG)
+    assert limited.calls == 2  # cooldown over: tried again (and cooled down again)
+    now[0] += 10
+    r.complete("summarize", MSG)
+    assert limited.calls == 2
+
+
+def test_5xx_does_not_trigger_cooldown(tmp_path):
+    class Boom:
+        calls = 0
+
+        def complete(self, req, model, timeout_s):
+            self.calls += 1
+            raise RetryableError("HTTP 503")
+
+    boom = Boom()
+    cfg = parse_routing({"tasks": {"summarize": {"chain": [{"backend": "openrouter", "model": FREE_A}, {"backend": "mock", "model": "m"}]}}})
+    r = Router(cfg, Store(tmp_path / "llm.db"), {"openrouter": boom, "mock": MockAdapter()})
+    r.complete("summarize", MSG)
+    r.complete("summarize", MSG)
+    assert boom.calls == 2
+
+
+def test_openrouter_429_raises_rate_limited():
+    with pytest.raises(RateLimited):
+        _or(lambda request: httpx.Response(429, text="slow"))            .complete(Request("t", MSG), FREE_B, 5)
+    with pytest.raises(RateLimited):
+        _or(lambda request: httpx.Response(200, json={"error": {"code": 429, "message": "rate"}}))            .complete(Request("t", MSG), FREE_B, 5)
+
+
+def test_oral_dialogue_is_haiku_first_with_free_fallback():
+    cfg = load_routing()
+    oral = cfg.tasks["oral_dialogue"]
+    assert oral.light and (oral.chain[0].backend, oral.chain[0].model) == ("claude_code", "claude-haiku-5-5")
+    assert [e.backend for e in oral.chain[1:]] == ["openrouter"] * 3
+    assert cfg.tasks["tutor_chat"].chain[0].backend == "openrouter"  # the other light tasks keep free-first

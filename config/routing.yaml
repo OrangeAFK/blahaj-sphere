@@ -11,6 +11,7 @@ timeout_s:
 # OpenRouter limits free models per ACCOUNT (20 req/min; 50/day under 10 credits), so a
 # backend-wide cap sits on top of the per-model cap. Counters reset at local midnight.
 default_daily_cap: 50
+rate_limit_cooldown_s: 1800   # a free model that returns 429 is skipped for 30 min (DECISIONS M4.1)
 backend_daily_caps:
   openrouter: 50
 
@@ -38,6 +39,15 @@ x-light: &light
     - {backend: openrouter, model: "openrouter/free"}
     - {backend: claude_code, model: claude-haiku-5-5}
 
+# Live voice dialogue needs low latency and reliable instruction-following: Haiku first, free models as fallback (DECISIONS M4.1).
+x-oral: &oral
+  light: true
+  chain:
+    - {backend: claude_code, model: claude-haiku-5-5}
+    - {backend: openrouter, model: "google/gemma-4-31b-it:free"}
+    - {backend: openrouter, model: "nvidia/nemotron-3-ultra-550b-a55b:free"}
+    - {backend: openrouter, model: "openrouter/free"}
+
 tasks:
   plan_branches: *heavy
   build_challenge: *builder
@@ -49,6 +59,6 @@ tasks:
   grade_tier_exam: *grading
   interview: *light
   tutor_chat: *light
-  oral_dialogue: *light
+  oral_dialogue: *oral
   diagnostic_dialogue: *light
   summarize: *light

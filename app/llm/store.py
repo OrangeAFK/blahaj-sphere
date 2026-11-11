@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS llm_counters (
   day TEXT NOT NULL, backend TEXT NOT NULL, model TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, backend, model)
 );
+CREATE TABLE IF NOT EXISTS cooldowns (
+  backend TEXT NOT NULL, model TEXT NOT NULL, until REAL NOT NULL, PRIMARY KEY (backend, model)
+);
 CREATE TABLE IF NOT EXISTS pending_grades (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created TEXT NOT NULL, task_type TEXT NOT NULL, node_id INTEGER, request TEXT NOT NULL,
@@ -69,6 +72,20 @@ class Store:
                 "ON CONFLICT(day,backend,model) DO UPDATE SET count=count+1",
                 (today(), backend, model),
             )
+
+    # --- cooldowns (a model that returned 429 is skipped until `until`, epoch seconds) ----
+    def set_cooldown(self, backend: str, model: str, until: float) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO cooldowns(backend,model,until) VALUES(?,?,?) "
+                "ON CONFLICT(backend,model) DO UPDATE SET until=excluded.until",
+                (backend, model, until),
+            )
+
+    def cooldown_until(self, backend: str, model: str) -> float:
+        with self._conn() as c:
+            r = c.execute("SELECT until FROM cooldowns WHERE backend=? AND model=?", (backend, model)).fetchone()
+        return r["until"] if r else 0.0
 
     def usage_today(self) -> list[dict]:
         with self._conn() as c:

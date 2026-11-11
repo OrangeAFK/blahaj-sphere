@@ -1,4 +1,5 @@
 import json
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from app.llm.adapters.openrouter import OpenRouterAdapter
 from app.llm.allowlist import check_free_model
 from app.llm.config import RoutingConfig, load_routing
 from app.llm.store import Store
-from app.llm.types import GradingUnavailable, LLMError, ModelNotAllowed, Request, Result, RetryableError
+from app.llm.types import GradingUnavailable, LLMError, ModelNotAllowed, RateLimited, Request, Result, RetryableError
 from app.settings import load_settings, settings_path
 
 
@@ -30,11 +31,13 @@ class Router:
         store: Store | None = None,
         adapters: dict[str, Adapter] | None = None,
         allow_library_to_free=lambda: load_settings().allow_library_to_free_models,
+        clock=time.time,
     ):
         self.config = config or load_routing()
         self.store = store or Store(settings_path().parent / "llm.db")
         self.adapters = adapters if adapters is not None else default_adapters()
         self.allow_library_to_free = allow_library_to_free
+        self.clock = clock
 
     def complete(
         self, task_type, messages, schema=None, cwd=None, tools=None, *,
@@ -55,6 +58,9 @@ class Router:
             if library_text and e.backend not in ("claude_code", "mock") and not self.allow_library_to_free():
                 errors.append(f"{e.backend}:{e.model} skipped (library text not allowed)")
                 continue
+            if e.backend == "openrouter" and self.store.cooldown_until(e.backend, e.model) > self.clock():
+                errors.append(f"{e.backend}:{e.model} skipped (cooling down after 429)")
+                continue
             if self._capped(e):
                 errors.append(f"{e.backend}:{e.model} skipped (daily cap)")
                 continue
@@ -66,6 +72,8 @@ class Router:
             try:
                 res = adapter.complete(req, e.model, self.config.timeout(e.backend))
             except RetryableError as ex:
+                if isinstance(ex, RateLimited) and e.backend == "openrouter":
+                    self.store.set_cooldown(e.backend, e.model, self.clock() + self.config.rate_limit_cooldown_s)
                 self._log(req, e, "retryable_error", error=str(ex))
                 errors.append(f"{e.backend}:{e.model}: {ex}")
                 continue

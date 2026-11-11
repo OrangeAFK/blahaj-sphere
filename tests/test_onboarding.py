@@ -195,13 +195,13 @@ def run_diagnostic(c, scores_by_domain: dict[str, list[int]]):
 
 def test_diagnostic_climbs_until_first_miss_and_sets_tiers(tmp_path, monkeypatch):
     plan = {  # domain -> scores of successive probes
-        "passives": [3, 3, 3],   # passes T1..T3 (probe cap) -> start T4
+        "passives": [3, 3],      # passes T1 and T2 (probe cap) -> start T3, the placement cap
         "matching": [3, 1],      # T1 pass, T2 miss -> T2
         "devices": [1],          # T1 miss -> T1
-        "noise": [2, 2, 1],      # score 2 passes the diagnostic bar; T3 miss -> T3
+        "noise": [2, 2],         # score 2 passes the diagnostic bar -> T3
         "linearity": [0],
         "em_layout": [3, 0],
-        "measurement": [2, 3, 2],
+        "measurement": [2, 3],
     }
     seq = [s for d in plan.values() for s in d]
     scores = iter(seq)
@@ -213,8 +213,8 @@ def test_diagnostic_climbs_until_first_miss_and_sets_tiers(tmp_path, monkeypatch
     finish_interview(c, tmp_path)
     freeze(c, tmp_path)
     v, asked = run_diagnostic(c, plan)
-    assert v["tiers"] == {"passives": 4, "matching": 2, "devices": 1, "noise": 3, "linearity": 1, "em_layout": 2, "measurement": 4}
-    assert asked == {d: len(s) for d, s in plan.items()} and max(asked.values()) <= 3
+    assert v["tiers"] == {"passives": 3, "matching": 2, "devices": 1, "noise": 3, "linearity": 1, "em_layout": 2, "measurement": 3}
+    assert asked == {d: len(s) for d, s in plan.items()} and max(asked.values()) <= 2 and max(v["tiers"].values()) <= 3
 
     events, bad = read_events(tmp_path / "events.jsonl")
     assert not bad and len(events) == len(seq) and all(e.type == "diagnostic_item" and e.node_id == 0 for e in events)
@@ -276,6 +276,14 @@ def test_unverbatim_quote_is_dropped(tmp_path, monkeypatch):
     assert st["domains"][0]["probes"][0]["quote"] == ""
 
 
+def test_initial_tier_is_capped_at_t3():
+    def d(tier):
+        return Event("i", "t", 0, "m", f"m.s{tier}", tier, "diagnostic_item", 1.0, 1.0)
+
+    assert initial_tier([d(1), d(2)]) == 3
+    assert initial_tier([d(1), d(2), d(3), d(4)]) == 3  # even if a later tier was probed and passed
+
+
 def test_diagnostic_pass_bar_is_two_for_single_probes():
     def d(tier, s):
         return Event("i", "t", 0, "m", f"m.s{tier}", tier, "diagnostic_item", s / 3, 1.0)
@@ -298,3 +306,15 @@ def test_mock_fixture_files_drive_the_real_mock_adapter(tmp_path, monkeypatch):
     p = c.post("/api/onboarding/diagnostic/next").json()["pending"]
     assert p["domain"] == "passives" and p["subskill"] == "matching.l_network"
     assert c.post("/api/onboarding/diagnostic/answer", json={"answer": "loaded Q sets bandwidth"}).json()["score"] == 2
+
+
+GRADER_PROMPT_SHA256 = "32c6c91aa56ccc498b2f60b872e718855b00a148e562e72355b52dab8afe92e7"
+
+
+def test_grader_prompt_is_frozen():
+    """SPEC 8.5: grading must stay consistent. Editing app/prompts/diagnostic_grader.md fails this test on purpose:
+    log the change in docs/DECISIONS.md and update the hash in the same commit."""
+    import hashlib
+
+    text = (Path(__file__).resolve().parents[1] / "app" / "prompts" / "diagnostic_grader.md").read_text(encoding="utf-8")
+    assert hashlib.sha256(text.replace(chr(13) + chr(10), chr(10)).encode()).hexdigest() == GRADER_PROMPT_SHA256
