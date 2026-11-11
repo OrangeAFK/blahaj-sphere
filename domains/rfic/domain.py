@@ -88,5 +88,6 @@ DOMAIN = Domain(
     run_checker=run_checker,
     run_commands=run_commands,
     framework_template=Path(__file__).parent / "framework_template.yaml",
+    vocab=Path(__file__).parent / "vocab.txt",
     builder=BuilderHooks(prompt=Path(__file__).parent / "prompts" / "builder.md", tool_names=_tool_names, mcp_config=_builder_mcp_config),
 )

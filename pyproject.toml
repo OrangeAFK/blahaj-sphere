@@ -9,6 +9,10 @@ dependencies = [
   "sqlmodel",
   "pyyaml",
   "httpx",
+  "faster-whisper>=1.2.1",
+  "sounddevice>=0.5.6",
+  "piper-tts>=1.8.0",
+  "numpy>=2.4.6",
 ]
 
 [dependency-groups]

@@ -12,7 +12,7 @@ from app.lifecycle.nodes import LifecycleError
 from app.llm.adapters.openrouter import OpenRouterAdapter
 from app.llm.types import Request, RetryableError
 from tests.test_builder_m5 import _opt, data  # noqa: F401 (data = fixture)
-from tests.test_lifecycle import ANSWERS, GRADES, SyncJobs, env, make, to_lab  # noqa: F401 (env = fixture)
+from tests.test_lifecycle import ANSWERS, GRADES, SyncJobs, env, make, text_oral, to_lab  # noqa: F401 (env = fixture)
 from tests.test_rescope import Jobs, setup
 
 
@@ -56,11 +56,11 @@ def test_failed_run_is_recorded_and_fails_the_job(env, tmp_path):
 
 
 def test_debrief_shows_the_persisted_checker_result(env, tmp_path):
-    lc, _, chk = make(env, tmp_path, {"grade_prelab_explain": [GRADES]})
+    lc, ad, chk = make(env, tmp_path, {"grade_prelab_explain": [GRADES]})
     to_lab(lc)
     lc.proof_submit(SyncJobs(), 901)
     assert lc.view(901)["status"] == "oral"
-    d = lc.oral_advance(901, "text")
+    d = text_oral(lc, ad)
     assert d["checker"]["kind"] == "proof" and d["checker"]["verdict"] == "pass"
     assert d["checker"]["tests"][0] == {"name": "f3db", "pass": True, "measured": 1.5, "spec": "<= 9", "unit": "Hz"}
     assert "f3db_hz" not in d["checker"]["metrics"]  # key metrics stay hidden here too

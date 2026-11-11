@@ -33,6 +33,18 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
+def tolerance_abs(it: dict) -> float:
+    """A numeric prelab key item's tolerance as an absolute amount in its unit (rel is a fraction of |value|)."""
+    tol_spec = it.get("tolerance") or {}
+    return float(tol_spec["rel"]) * abs(float(it["value"])) if "rel" in tol_spec else float(tol_spec.get("abs", 0.0))
+
+
+def refresh_provisional(store: NodeStore, ref: NodeRef) -> None:
+    """provisional = any grading (prelab explanations, oral) is still pending (SPEC §3.1)."""
+    pending = any((store.session(ref, name, {}).get("grading") or {}).get("status") == "pending" for name in ("debrief", "oral"))
+    store.set_scalar(ref, "provisional", pending)
+
+
 def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -94,6 +106,7 @@ class Debrief:
         self.router = router
         self.domain_pack = domain_pack
         self.ev = Evidence(store, tutor)
+        self.oral_section = None  # callable(ref) -> dict, installed by Lifecycle
 
     # --- state ------------------------------------------------------------------------------------------
     def _state(self, ref: NodeRef) -> dict:
@@ -128,8 +141,7 @@ class Debrief:
             if it.get("kind") != "numeric" or it["id"] not in answers:
                 continue
             value, pred = float(it["value"]), float(answers[it["id"]])
-            tol_spec = it.get("tolerance") or {}
-            tol = float(tol_spec["rel"]) * abs(value) if "rel" in tol_spec else float(tol_spec.get("abs", 0.0))
+            tol = tolerance_abs(it)
             err = pred - value
             self.ev.emit(ref, "prelab_numeric", it["subskill"], err=err, tol=tol)
             cal.append({"id": it["id"], "subskill": it["subskill"], "unit": it.get("unit"), "predicted": pred, "actual": value,
@@ -158,12 +170,14 @@ class Debrief:
             res = self.router.complete(GRADE_TASK, msgs, schema=GRADE_SCHEMA, node_id=ref.id)  # a failure is queued by the router (§3.1)
         except LLMError as e:
             g["status"], g["error"] = "pending", str(e)[:300]
-            self.store.set_scalar(ref, "provisional", True)
+            self.store.save_session(ref, "debrief", st)
+            refresh_provisional(self.store, ref)
         else:
             err = self._apply_grades(ref, st, res.json, res.model)
             if err:  # unusable grader output: queue it like an outage, the retry asks again
                 g["status"], g["error"] = "pending", err
-                self.store.set_scalar(ref, "provisional", True)
+                self.store.save_session(ref, "debrief", st)
+                refresh_provisional(self.store, ref)
                 self.router.store.enqueue_grade(GRADE_TASK, asdict(_request(msgs, ref.id)), ref.id, err)
         self.store.save_session(ref, "debrief", st)
 
@@ -189,7 +203,8 @@ class Debrief:
         self.ev.log_misconceptions(ref, out.get("misconceptions"), None)
         g.update(status="done", results=results, model=model)
         g.pop("error", None)
-        self.store.set_scalar(ref, "provisional", False)
+        self.store.save_session(ref, "debrief", st)
+        refresh_provisional(self.store, ref)
         return None
 
     def apply_queued(self, row: dict, result) -> None:
@@ -231,7 +246,7 @@ class Debrief:
                        "items": [{k: r[k] for k in ("id", "subskill", "prompt", "score", "quote", "rationale")} for r in g.get("results", [])],
                        "pending_items": [{"id": i["id"], "subskill": i["subskill"], "prompt": i["prompt"]} for i in g["items"]] if g["status"] == "pending" else [],
                        "model": g.get("model")},  # fmt: skip
-            "oral": {"status": "not_graded", "note": "voice oral and its grading arrive in M7"},
+            "oral": self.oral_view(ref),
             "misconceptions": {
                 "logged": [{k: m[k] for k in ("id", "text", "subskill")} for m in mis if m["node_id"] == ref.id],
                 "resolved": [{k: m[k] for k in ("id", "text", "subskill")} for m in mis if m["resolved"] and m["resolved_by_node"] == ref.id],
@@ -239,6 +254,10 @@ class Debrief:
             "mastery": self.mastery_deltas(ref),
             "next_action": "finish_debrief" if self.store.status(ref) == "debrief" else "plan_next",
         }  # fmt: skip
+
+    def oral_view(self, ref: NodeRef) -> dict:
+        """The oral section of the debrief; the exam itself lives in app/lifecycle/oral.py (set by Lifecycle to avoid an import cycle)."""
+        return self.oral_section(ref) if self.oral_section else {"status": "not_graded", "note": ""}
 
     def mastery_deltas(self, ref: NodeRef) -> list[dict]:
         """Per domain this node produced evidence in: tier and mastery just before its first event vs after its last."""
@@ -267,7 +286,16 @@ class Debrief:
             L.append("Grades pending: they will appear here when grading succeeds.")
         for r in v["grades"]["items"]:
             L.append(f"- {r['id']} ({r['subskill']}): {r['score']}/3" + (f' "{r["quote"]}"' if r["quote"] else "") + f" {r['rationale']}")
-        L += ["", "## Oral", "", v["oral"]["note"], "", "## Misconceptions", ""]
+        o = v["oral"]
+        L += ["", "## Oral", ""]
+        if o.get("items"):
+            L.append(f"{'Passed' if o['passed'] else 'Not passed'} (mean {'n/a' if o['mean'] is None else format(o['mean'], '.2f')} over non-interleaved items; pass = mean >= 2.0 and no 0).")
+            L += [f"- {r['id']} ({r['subskill']}{', interleaved' if r['interleaved'] else ''}): {r['score']}/3" + (f' "{r["quote"]}"' if r["quote"] else "") + f" {r['rationale']}" for r in o["items"]]
+            if o.get("remediation"):
+                L.append(f"- remediation: {o['remediation'].get('status')}" + (f" ({o['remediation']['node_dir']})" if o["remediation"].get("node_dir") else ""))
+        else:
+            L.append(o.get("note") or "")
+        L += ["", "## Misconceptions", ""]
         L += [f"- logged: {m['text']} ({m['subskill']})" for m in v["misconceptions"]["logged"]]
         L += [f"- resolved: {m['text']} ({m['subskill']})" for m in v["misconceptions"]["resolved"]]
         L += ["", "## Mastery", ""]

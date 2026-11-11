@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, REASON_CLASSES, waitJob, type CheckerView, type CheckTest, type DebriefView, type NodeView, type ProofView, type RunRecord } from './api/client'
+import { api, REASON_CLASSES, waitJob, type CheckerView, type CheckTest, type DebriefView, type NodeView, type OralDebrief, type ProofView, type RunRecord } from './api/client'
 import { Badge, Btn, Card, Err, errMsg } from './ui'
 import { Tutor } from './Tutor'
+import { Oral } from './Oral'
 import { Markdown } from './Markdown'
 
 const STAGES = ['prelab', 'lab', 'proof', 'oral', 'debrief', 'done'] as const
@@ -273,29 +274,44 @@ function Lab({ node, reload }: { node: NodeView; reload: () => void }) {
   )
 }
 
-function Oral({ node, onDone }: { node: NodeView; onDone: () => void }) {
-  const [info, setInfo] = useState<{ note: string } | null>(null)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
-  useEffect(() => { api.oral(node.id).then(setInfo).catch((e) => setErr(errMsg(e))) }, [node.id])
-  const go = async () => {
-    setBusy(true)
-    try {
-      await api.advanceOral(node.id)
-      onDone()
-    } catch (e) {
-      setErr(errMsg(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+function OralResult({ node, oral, reload, setErr }: { node: NodeView; oral: OralDebrief; reload: () => void; setErr: (s: string) => void }) {
+  const rem = oral.remediation
   return (
-    <Card title="Oral" right={<Badge tone="amber">text stub</Badge>}>
-      <p className="text-sm">Proof passed. Voice oral arrives in M7; for now the text stub moves you straight to the debrief.</p>
-      {info && <p className="mt-1 text-xs text-gray-500">{info.note}</p>}
-      <Btn primary className="mt-2" disabled={busy} onClick={go}>{busy ? 'Grading explanations…' : 'Start oral (text) and go to debrief'}</Btn>
-      <Err e={err} />
-    </Card>
+    <div data-testid="oral-result">
+      <h3 className="mt-3 flex items-center gap-2 text-sm font-semibold">
+        Oral exam
+        {oral.status === 'graded' && (oral.passed ? <Badge tone="green">passed</Badge> : <Badge tone="red">not passed</Badge>)}
+        {oral.status === 'pending' && <Badge tone="amber">pending</Badge>}
+      </h3>
+      {oral.status === 'graded' && (
+        <p className="text-xs text-gray-500">
+          Mean {oral.mean != null ? oral.mean.toFixed(2) : 'n/a'} over the non-interleaved questions (pass: mean ≥ 2.0 and no 0). Interleaved questions count toward mastery but never fail the node.
+        </p>
+      )}
+      {oral.status === 'pending' && <p className="text-sm text-amber-700">{oral.note}</p>}
+      {oral.status === 'not_taken' && <p className="text-sm text-gray-500">{oral.note}</p>}
+      {(oral.items ?? []).map((g) => (
+        <div key={g.id} className="mt-1 text-sm" data-testid={`oral-${g.id}`}>
+          <span className="font-mono text-xs text-sky-700">{g.id}</span> <span className="font-semibold">{g.score}/3</span>{' '}
+          <span className="text-xs text-gray-500">{g.subskill}{g.interleaved ? ' · interleaved' : ''}</span>
+          <div className="text-xs text-gray-600">{g.question}</div>
+          {g.quote && <blockquote className="border-l-2 border-sky-300 pl-2 text-gray-700">“{g.quote}”</blockquote>}
+          <Markdown>{g.rationale}</Markdown>
+        </div>
+      ))}
+      {rem && (
+        <div className="mt-2 rounded bg-amber-50 p-2 text-sm text-amber-900" data-testid="oral-remediation">
+          <b>Remediation:</b>{' '}
+          {rem.status === 'building' && <>a short follow-up node{rem.title ? <> (“{rem.title}”)</> : null} is being built.</>}
+          {rem.status === 'ready' && <>follow-up node {rem.node_dir} is ready; find it on Home.</>}
+          {rem.status === 'needed' && <>a follow-up node is needed (it starts when the job worker is running).</>}
+          {rem.status === 'failed' && <>could not start the follow-up node: {rem.error}</>}
+          {(rem.status === 'failed' || rem.status === 'needed') && (
+            <Btn className="ml-2" onClick={() => api.retryRemediation(node.id).then(reload).catch((e) => setErr(errMsg(e)))}>Retry</Btn>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -373,7 +389,7 @@ function Debrief({ node, onDone, home }: { node: NodeView; onDone: () => void; h
         ))}
         {d.grades.status === 'pending' && <li className="text-xs text-amber-700">Provisional: deltas will change when grades land.</li>}
       </ul>
-      <p className="mt-2 text-xs text-gray-500">Oral: {d.oral.note}</p>
+      <OralResult node={node} oral={d.oral} reload={load} setErr={setErr} />
       {d.status === 'debrief' ? (
         <Btn primary className="mt-3" onClick={finish}>Finish debrief</Btn>
       ) : (

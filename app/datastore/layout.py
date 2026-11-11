@@ -21,6 +21,8 @@ archive/nodes/*/.gate/
 _spike_archive/
 spike/
 builds/failed/
+# Voice models (~520 MB, `python -m app.voice download`; DECISIONS M7)
+models/
 __pycache__/
 *.pyc
 """

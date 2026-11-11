@@ -1,18 +1,19 @@
-"""Node lifecycle endpoints (SPEC §7.2-7.7): prelab, lab, tutor, proof, oral stub, debrief, rescope, grading queue.
+"""Node lifecycle endpoints (SPEC §7.2-7.7): prelab, lab, tutor, proof, oral (voice + text), debrief, rescope, grading queue.
 Sync handlers run in the threadpool."""
 
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from app.jobs.deps import get_running_manager
+from app.jobs.deps import get_running_manager, manager_for
 from app.jobs.manager import JobManager
 from app.lifecycle.nodes import LifecycleError
 from app.lifecycle.service import Lifecycle
 from app.llm.types import LLMError
 from app.routes.builder import _llm
 from app.settings import data_dir
+from app.voice.service import voice_for
 
 router = APIRouter()
 Jobs = Annotated[JobManager, Depends(get_running_manager)]
@@ -20,7 +21,7 @@ Jobs = Annotated[JobManager, Depends(get_running_manager)]
 
 def _lc(request: Request) -> Lifecycle:
     try:
-        return Lifecycle(data_dir(), _llm(request), request.app.state.domain)
+        return Lifecycle(data_dir(), _llm(request), request.app.state.domain, voice=voice_for(request.app), jobs=manager_for(request.app))
     except LifecycleError as e:
         raise HTTPException(e.status, e.message) from None
 
@@ -44,6 +45,7 @@ class NodeSummary(BaseModel):
     status: str
     provisional: bool
     next_action: str
+    outcome: str | None = None  # "done-with-remediation" when the oral failed and a remediation child was spawned
 
 
 class PrelabItemView(BaseModel):
@@ -131,8 +133,13 @@ class RemediationBody(BaseModel):
     accept: bool
 
 
-class OralBody(BaseModel):
-    mode: str = "text"
+class OralStartBody(BaseModel):
+    mode: Literal["voice", "text"] = "text"
+    tts: bool = False  # read the questions aloud (Piper)
+
+
+class OralAnswerBody(BaseModel):
+    text: str
 
 
 class RescopeBody(BaseModel):
@@ -239,10 +246,57 @@ def get_oral(node_id: int, request: Request) -> dict:
     return _call(lambda: _lc(request).oral_info(node_id))
 
 
-@router.post("/nodes/{node_id}/oral/advance", operation_id="advanceOral")
-def advance_oral(node_id: int, body: OralBody, request: Request) -> dict:
-    """Stub until M7: text mode moves the node to Debrief for testing."""
-    return _call(lambda: _lc(request).oral_advance(node_id, body.mode))
+@router.post("/nodes/{node_id}/oral/start", operation_id="startOral")
+def start_oral(node_id: int, body: OralStartBody, request: Request) -> dict:
+    """Begin (or resume, switching mode) the oral exam; returns the view with the first question."""
+    lc = _lc(request)
+    return _call(lambda: lc.oral.start(lc.store.find(node_id), body.mode, body.tts))
+
+
+@router.post("/nodes/{node_id}/oral/answer", operation_id="answerOral")
+def answer_oral(node_id: int, body: OralAnswerBody, request: Request) -> dict:
+    """Text fallback: one typed answer -> the examiner's next utterance."""
+    lc = _lc(request)
+    return _call(lambda: lc.oral.answer(lc.store.find(node_id), body.text))
+
+
+@router.post("/nodes/{node_id}/oral/record/start", operation_id="startOralRecording")
+def record_start(node_id: int, request: Request) -> dict:
+    """Push-to-talk down: the backend starts recording the microphone."""
+    lc = _lc(request)
+    return _call(lambda: lc.oral.record_start(lc.store.find(node_id)))
+
+
+@router.post("/nodes/{node_id}/oral/record/stop", operation_id="stopOralRecording")
+def record_stop(node_id: int, request: Request) -> dict:
+    """Push-to-talk up: stop, transcribe, get the examiner's reply (and its audio) in one request."""
+    lc = _lc(request)
+    return _call(lambda: lc.oral.record_stop(lc.store.find(node_id)))
+
+
+@router.post("/nodes/{node_id}/oral/record/cancel", operation_id="cancelOralRecording")
+def record_cancel(node_id: int, request: Request) -> dict:
+    lc = _lc(request)
+    return _call(lambda: lc.oral.record_cancel(lc.store.find(node_id)))
+
+
+@router.get("/nodes/{node_id}/oral/audio/{n}", operation_id="getOralAudio")
+def oral_audio(node_id: int, n: int, request: Request) -> Response:
+    lc = _lc(request)
+    wav = _call(lambda: lc.oral.audio(lc.store.find(node_id), n))
+    return Response(wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/nodes/{node_id}/oral/finish", operation_id="finishOral")
+def finish_oral(node_id: int, request: Request) -> dict:
+    """The exam is complete: grade it and move to the Debrief."""
+    return _call(lambda: _lc(request).oral_finish(node_id))
+
+
+@router.post("/nodes/{node_id}/oral/remediation/retry", operation_id="retryRemediation")
+def retry_remediation(node_id: int, request: Request) -> dict:
+    lc = _lc(request)
+    return _call(lambda: lc.oral.retry_remediation(lc.store.find(node_id)))
 
 
 @router.get("/nodes/{node_id}/debrief", operation_id="getDebrief")

@@ -64,9 +64,9 @@ test('prelab markdown renders as formatted questions and inputs stay labelled by
 
 test('a locked prelab has no editable inputs', async () => {
   routes['GET /nodes/4'] = () => node({ status: 'oral', prelab: { ...node().prelab, locked: true } })
-  routes['GET /nodes/4/oral'] = () => ({ note: 'stub' })
+  routes['GET /nodes/4/oral'] = () => ({ status: 'none', mode: 'text', tts: false, voice: { stt: false, tts: false, microphone: false }, turns: [], latency: [], progress: { asked: 0, of: 0 }, plan: null })
   render(<NodePage id={4} home={() => {}} />)
-  await screen.findByText('Start oral (text) and go to debrief')
+  await screen.findByText('Start oral exam')
   expect(screen.queryByLabelText('p1')).toBeNull()
 })
 
@@ -118,7 +118,7 @@ test('debrief shows calibration, pending badge and mastery deltas', async () => 
     node_id: 4, title: 'x', status: 'debrief', provisional: true, proof: { passed: true, submissions: 2, failed_submissions: 1 },
     calibration: { within: 1, total: 2, numeric: [{ id: 'p1', subskill: 'm.a', unit: 'mS', predicted: 12, actual: 12.5, error: -0.5, rel_error: -0.04, tolerance: 1, within: true }] },
     grades: { status: 'pending', items: [], pending_items: [{ id: 'p3', subskill: 'm.a', prompt: 'Why?' }], model: null },
-    oral: { status: 'not_graded', note: 'M7' }, misconceptions: { logged: [], resolved: [] },
+    oral: { status: 'not_graded', note: '' }, misconceptions: { logged: [], resolved: [] },
     mastery: [{ domain: 'measurement', tier: 3, mastery_before: 10, mastery_after: 14.5, delta: 4.5, exam_unlocked: false }], next_action: 'finish_debrief',
   })
   render(<NodePage id={4} home={() => {}} />)
@@ -164,7 +164,7 @@ test('debrief shows the persisted final checker result', async () => {
     node_id: 4, title: 'x', status: 'debrief', provisional: false, proof: { passed: true, submissions: 1, failed_submissions: 0 },
     checker: { verdict: 'pass', kind: 'proof', seconds: 1, metrics: {}, tests: [{ name: 'S21 error', pass: true, measured: 0.17, spec: '<= 0.5', unit: 'dB' }] },
     calibration: { within: 0, total: 0, numeric: [] }, grades: { status: 'graded', items: [], pending_items: [], model: 'm' },
-    oral: { status: 'not_graded', note: 'M7' }, misconceptions: { logged: [], resolved: [] }, mastery: [], next_action: 'finish_debrief',
+    oral: { status: 'not_graded', note: '' }, misconceptions: { logged: [], resolved: [] }, mastery: [], next_action: 'finish_debrief',
   })
   render(<NodePage id={4} home={() => {}} />)
   const row = (await screen.findByText('S21 error')).closest('tr')!

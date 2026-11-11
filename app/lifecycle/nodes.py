@@ -162,6 +162,10 @@ class NodeStore:
         doc = yaml.safe_load((ref.path / "_hidden" / "prelab_key.yaml").read_text(encoding="utf-8")) or {}
         return [it for it in doc.get("items") or [] if isinstance(it, dict)]
 
+    def oral_key(self, ref: NodeRef) -> list[dict]:
+        doc = yaml.safe_load((ref.path / "_hidden" / "oral_key.yaml").read_text(encoding="utf-8")) or {}
+        return [it for it in doc.get("items") or [] if isinstance(it, dict) and it.get("id")]
+
     def prelab_prompts(self, ref: NodeRef) -> dict[str, str]:
         """item id -> its question text, cut out of prelab.md at the `**pN**` markers."""
         p = ref.path / "prelab.md"

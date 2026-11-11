@@ -1,4 +1,4 @@
-"""Node lifecycle (SPEC §7.2-7.5, §7.7): prelab lock, lab checker runs, proof, oral stub, debrief, rescope.
+"""Node lifecycle (SPEC §7.2-7.7): prelab lock, lab checker runs, proof, oral (app/lifecycle/oral.py), debrief, rescope.
 
 All LLM access goes through the Router; the checker runs through the domain (`Domain.run_checker`). Handlers are sync: FastAPI
 runs them in its threadpool, and long work (checker, rescope builds) goes to the job manager.
@@ -23,6 +23,7 @@ from app.builder.service import BuildError, BuildService
 from app.datastore.cache import rebuild_db
 from app.domains import Domain
 from app.lifecycle.debrief import Debrief
+from app.lifecycle.oral import OralExam
 from app.lifecycle.nodes import NEXT_ACTION, RESCOPABLE, WORKING, LifecycleError, NodeRef, NodeStore, append_jsonl, autocommit, node_lock
 from app.lifecycle.tutor import Tutor, public_checker
 from app.llm.types import LLMError
@@ -42,7 +43,7 @@ def _now() -> str:
 
 
 class Lifecycle:
-    def __init__(self, data_root: Path, router, domain: Domain | None):
+    def __init__(self, data_root: Path, router, domain: Domain | None, voice=None, jobs=None):
         if domain is None:
             raise LifecycleError(501, "no active domain")
         self.store = NodeStore(data_root)
@@ -50,6 +51,8 @@ class Lifecycle:
         self.domain = domain
         self.tutor = Tutor(self.store, router, domain.name)
         self.debrief = Debrief(self.store, router, domain.name, self.tutor)
+        self.oral = OralExam(self.store, router, domain, self.debrief, voice, jobs)
+        self.debrief.oral_section = lambda ref: self.oral.debrief_view(ref)
 
     @property
     def root(self) -> Path:
@@ -60,7 +63,8 @@ class Lifecycle:
         fm = self.store.frontmatter(ref)
         st = str(fm.get("status"))
         return {"id": ref.id, "dir": ref.name, "title": fm.get("title"), "kind": fm.get("kind"), "domain": fm.get("domain"), "tier": fm.get("tier"),
-                "status": st, "provisional": bool(fm.get("provisional")), "next_action": NEXT_ACTION.get(st, "plan_next")}  # fmt: skip
+                "status": st, "provisional": bool(fm.get("provisional")), "next_action": NEXT_ACTION.get(st, "plan_next"),
+                "outcome": self.oral.outcome(ref) if st == "done" else None}  # fmt: skip
 
     def list_nodes(self) -> list[dict]:
         return [self.summary(r) for r in self.store.all()]
@@ -332,21 +336,23 @@ class Lifecycle:
             append_jsonl(self.root / "remediation.jsonl", {"ts": _now(), "node_id": ref.id, "decision": ps["remediation_decision"]})
         return self.proof_view(node_id)
 
-    # --- oral (§7.6): stub until M7 --------------------------------------------------------------------------
+    # --- oral (§7.6): app/lifecycle/oral.py ------------------------------------------------------------------
     def oral_info(self, node_id: int) -> dict:
         ref = self.store.find(node_id)
-        st = self.store.status(ref)
-        return {"implemented": False, "milestone": "M7", "stage": st, "modes": ["text"], "can_advance": st == "oral",
-                "note": "voice oral and grading arrive in M7; text mode only advances the node to Debrief for testing"}  # fmt: skip
+        return self.oral.view(ref)
 
-    def oral_advance(self, node_id: int, mode: str) -> dict:
-        if mode != "text":
-            raise LifecycleError(422, "only mode 'text' exists until M7 (voice oral)")
+    def oral_finish(self, node_id: int) -> dict:
+        """End of the exam: oral.md, move to Debrief, numeric prelab events + explanation grading, oral grading (pass rule,
+        misconceptions, remediation child on a fail)."""
         ref = self.store.find(node_id)
         with node_lock(ref.id):
             self.store.require(ref, "oral")
+            self.oral.require_complete(ref)
+            self.oral.write_md(ref)
             self.store.transition(ref, "debrief", commit=False)
             self.debrief.finalize(ref)
+            self.oral.grade(ref)
+            self.debrief.write_md(ref)
             autocommit(self.root, f"node {ref.id}: oral -> debrief")
         return self.debrief_view(node_id)
 
@@ -358,6 +364,9 @@ class Lifecycle:
             d = self.debrief._state(ref)
             if st == "debrief" and (not d["numeric_done"] or d["grading"]["status"] == "none"):
                 self.debrief.finalize(ref)  # recovers a debrief entry that was interrupted
+            if st == "debrief" and self.oral._state(ref)["status"] == "complete" and self.oral._state(ref)["grading"]["status"] == "none":
+                self.oral.grade(ref)
+                self.debrief.write_md(ref)
         return self.debrief.view(ref)
 
     def debrief_complete(self, node_id: int) -> dict:
@@ -370,7 +379,10 @@ class Lifecycle:
     # --- grading queue (§3.1) ----------------------------------------------------------------------------------
     def retry_grades(self, force: bool = False) -> int:
         """Retry due pending grades (on app start, periodically, or `force` ignoring the backoff). -> number applied."""
-        done = self.router.retry_pending_grades(self.debrief.apply_queued, now=float("inf") if force else None)
+        def apply(row, result):
+            (self.oral if row.get("task_type") == "grade_oral" else self.debrief).apply_queued(row, result)
+
+        done = self.router.retry_pending_grades(apply, now=float("inf") if force else None)
         return len(done)
 
     def pending_grades(self) -> list[dict]:

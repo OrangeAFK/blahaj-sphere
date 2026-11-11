@@ -1,0 +1,129 @@
+S-parameters
+S11
+S21
+Smith chart
+L-match
+pi-match
+impedance matching
+reflection coefficient
+VSWR
+return loss
+insertion loss
+characteristic impedance
+reference plane
+de-embedding
+open-short
+Y-parameters
+Z-parameters
+transmission line
+microstrip
+coplanar waveguide
+GSG pad
+pad parasitics
+bondwire
+spiral inductor
+quality factor
+self-resonance
+SRF
+substrate loss
+eddy current
+skin effect
+MIM capacitor
+varactor
+transconductance
+gm
+output conductance
+gm over Id
+fT
+fmax
+Cgs
+Cgd
+Miller effect
+HBT
+BiCMOS
+SiGe
+SG13G2
+SKY130
+CMOS
+MOSFET
+NMOS
+PMOS
+cascode
+common-emitter
+common-source
+differential pair
+current mirror
+bias network
+biasing
+LNA
+low-noise amplifier
+power amplifier
+PA
+mixer
+Gilbert cell
+VCO
+voltage-controlled oscillator
+PLL
+phase noise
+phase-locked loop
+noise figure
+Friis formula
+noise temperature
+thermal noise
+flicker noise
+input-referred noise
+cascade
+gain compression
+P1dB
+IP3
+IIP3
+third-order intercept
+intermodulation
+two-tone test
+linearity
+harmonic distortion
+AM-to-PM
+EVM
+dynamic range
+ngspice
+openEMS
+Xschem
+KLayout
+PDK
+SPICE
+S-parameter simulation
+AC analysis
+harmonic balance
+transient analysis
+FDTD
+ground plane
+via
+shunt capacitance
+series inductance
+shunt admittance
+series impedance
+dummy structure
+VNA
+calibration
+TRL
+SOLT
+millimeter wave
+60 GHz
+2.4 GHz
+resonance
+stability factor
+Rollett
+Kurokawa
+unilateral gain
+maximum available gain
+conjugate match
+Q factor
+bandwidth
+ohm
+nanohenry
+picofarad
+femtofarad
+decibel
+dBm
+EM simulation
+electromagnetic simulation

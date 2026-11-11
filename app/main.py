@@ -41,7 +41,7 @@ async def _grading_loop(app: FastAPI) -> None:
     r.app = app  # type: ignore[attr-defined]
     while True:
         try:
-            await asyncio.to_thread(lambda: Lifecycle(data_dir(), _llm(r), app.state.domain).retry_grades())  # type: ignore[arg-type]
+            await asyncio.to_thread(lambda: Lifecycle(data_dir(), _llm(r), app.state.domain, jobs=manager_for(app)).retry_grades())  # type: ignore[arg-type]
         except Exception:  # noqa: BLE001 - a retry failure must never kill the app
             pass
         await asyncio.sleep(GRADING_RETRY_S)

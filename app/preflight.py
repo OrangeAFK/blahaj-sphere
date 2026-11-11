@@ -121,7 +121,7 @@ def check_openrouter(p: Probe, settings: Settings) -> Check:
 
 
 def check_models(data: Path) -> Check:
-    """Voice models (M7 downloads them). Optional: oral exams have a text fallback (SPEC §7.6)."""
+    """Voice models (`python -m app.voice download`). Optional: oral exams have a text fallback (SPEC §7.6)."""
     label = "Voice models downloaded"
 
     def present(name: str) -> bool:
@@ -133,7 +133,7 @@ def check_models(data: Path) -> Check:
         return Check(id="models", label=label, status="ok", detail="whisper + piper present")
     return Check(
         id="models", label=label, status="warn", detail=f"missing: {', '.join(missing)}",
-        fix="Voice is optional (text mode works). The model download arrives with the voice milestone (M7).",
+        fix="Voice is optional (text mode works). Download the models (~520 MB): uv run python -m app.voice download",
     )  # fmt: skip
 
 

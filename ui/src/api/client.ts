@@ -30,7 +30,21 @@ export type ProofView = {
   stage: string; artifacts: string[]; submissions: ProofSubmission[]; failed: number
   remediation_offer: boolean; remediation_decision: string | null
 }
-export type OralInfo = { implemented: boolean; milestone: string; stage: string; modes: string[]; can_advance: boolean; note: string }
+export type OralTurn = { n: number; role: 'examiner' | 'learner'; text: string; kind: string | null; source: string | null; audio_url?: string }
+export type OralLatency = { n: number; record_s?: number; stt_s?: number; llm_s: number; tts_s: number; total_s: number }
+export type OralView = {
+  implemented: boolean; stage: string; status: 'none' | 'active' | 'complete'; mode: 'voice' | 'text'; tts: boolean
+  voice: { stt: boolean; tts: boolean; microphone: boolean }; recording: boolean
+  plan: { n_core: number; n_interleaved: number; reason: string } | null
+  progress: { asked: number; of: number }; can_finish: boolean; turns: OralTurn[]; latency: OralLatency[]
+}
+export type OralTurnResult = { empty?: boolean; transcript?: string; heard_s?: number; learner?: OralTurn; examiner?: OralTurn; done?: boolean; view: OralView }
+export type OralDebrief = {
+  status: string; note: string; mode?: string; passed?: boolean | null; mean?: number | null; model?: string | null
+  items?: { id: string; subskill: string; interleaved: boolean; question: string; score: number; quote: string; rationale: string }[]
+  remediation?: { status: string; node_dir?: string; title?: string; error?: string } | null
+  latency?: { turns: number; median_total_s: number | null }
+}
 export type MasteryDelta = { domain: string; tier: number; mastery_before: number; mastery_after: number; delta: number; exam_unlocked: boolean }
 export type Calibration = {
   id: string; subskill: string; unit: string | null; predicted: number; actual: number
@@ -46,7 +60,7 @@ export type DebriefView = {
     pending_items: { id: string; subskill: string; prompt: string }[]
     model: string | null
   }
-  oral: { status: string; note: string }
+  oral: OralDebrief
   misconceptions: { logged: { id: string; text: string; subskill: string }[]; resolved: { id: string; text: string; subskill: string }[] }
   mastery: MasteryDelta[]
   next_action: string
@@ -117,8 +131,14 @@ export const api = {
   submitProof: (id: number) => post<{ job_id: string; submission: number }>(`/nodes/${id}/proof/submit`),
   proof: (id: number) => req<ProofView>(`/nodes/${id}/proof`),
   remediation: (id: number, accept: boolean) => post<ProofView>(`/nodes/${id}/proof/remediation`, { accept }),
-  oral: (id: number) => req<OralInfo>(`/nodes/${id}/oral`),
-  advanceOral: (id: number) => post<DebriefView>(`/nodes/${id}/oral/advance`, { mode: 'text' }),
+  oral: (id: number) => req<OralView>(`/nodes/${id}/oral`),
+  startOral: (id: number, mode: 'voice' | 'text', tts: boolean) => post<OralView>(`/nodes/${id}/oral/start`, { mode, tts }),
+  answerOral: (id: number, text: string) => post<OralTurnResult>(`/nodes/${id}/oral/answer`, { text }),
+  startRecording: (id: number) => post<{ recording: boolean }>(`/nodes/${id}/oral/record/start`),
+  stopRecording: (id: number) => post<OralTurnResult>(`/nodes/${id}/oral/record/stop`),
+  cancelRecording: (id: number) => post<{ recording: boolean }>(`/nodes/${id}/oral/record/cancel`),
+  finishOral: (id: number) => post<DebriefView>(`/nodes/${id}/oral/finish`),
+  retryRemediation: (id: number) => post<{ status: string }>(`/nodes/${id}/oral/remediation/retry`),
   debrief: (id: number) => req<DebriefView>(`/nodes/${id}/debrief`),
   completeDebrief: (id: number) => post<NodeSummary>(`/nodes/${id}/debrief/complete`),
   rescope: (id: number, reason_class: string, reason: string) => post<RescopeStarted>(`/nodes/${id}/rescope`, { reason_class, reason }),

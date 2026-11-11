@@ -1369,11 +1369,11 @@
         }
       }
     },
-    "/api/nodes/{node_id}/oral/advance": {
+    "/api/nodes/{node_id}/oral/start": {
       "post": {
-        "summary": "Advance Oral",
-        "description": "Stub until M7: text mode moves the node to Debrief for testing.",
-        "operationId": "advanceOral",
+        "summary": "Start Oral",
+        "description": "Begin (or resume, switching mode) the oral exam; returns the view with the first question.",
+        "operationId": "startOral",
         "parameters": [
           {
             "name": "node_id",
@@ -1390,7 +1390,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/OralBody"
+                "$ref": "#/components/schemas/OralStartBody"
               }
             }
           }
@@ -1403,7 +1403,313 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": true,
-                  "title": "Response Advanceoral"
+                  "title": "Response Startoral"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/oral/answer": {
+      "post": {
+        "summary": "Answer Oral",
+        "description": "Text fallback: one typed answer -> the examiner's next utterance.",
+        "operationId": "answerOral",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OralAnswerBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Answeroral"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/oral/record/start": {
+      "post": {
+        "summary": "Record Start",
+        "description": "Push-to-talk down: the backend starts recording the microphone.",
+        "operationId": "startOralRecording",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Startoralrecording"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/oral/record/stop": {
+      "post": {
+        "summary": "Record Stop",
+        "description": "Push-to-talk up: stop, transcribe, get the examiner's reply (and its audio) in one request.",
+        "operationId": "stopOralRecording",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Stoporalrecording"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/oral/record/cancel": {
+      "post": {
+        "summary": "Record Cancel",
+        "operationId": "cancelOralRecording",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Canceloralrecording"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/oral/audio/{n}": {
+      "get": {
+        "summary": "Oral Audio",
+        "operationId": "getOralAudio",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          },
+          {
+            "name": "n",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "N"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/oral/finish": {
+      "post": {
+        "summary": "Finish Oral",
+        "description": "The exam is complete: grade it and move to the Debrief.",
+        "operationId": "finishOral",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Finishoral"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/oral/remediation/retry": {
+      "post": {
+        "summary": "Retry Remediation",
+        "operationId": "retryRemediation",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Retryremediation"
                 }
               }
             }
@@ -2738,6 +3044,17 @@
           "next_action": {
             "type": "string",
             "title": "Next Action"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
           }
         },
         "type": "object",
@@ -2815,6 +3132,17 @@
           "next_action": {
             "type": "string",
             "title": "Next Action"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
           },
           "subskills": {
             "items": {
@@ -2928,16 +3256,38 @@
         ],
         "title": "OnboardingState"
       },
-      "OralBody": {
+      "OralAnswerBody": {
         "properties": {
-          "mode": {
+          "text": {
             "type": "string",
-            "title": "Mode",
-            "default": "text"
+            "title": "Text"
           }
         },
         "type": "object",
-        "title": "OralBody"
+        "required": [
+          "text"
+        ],
+        "title": "OralAnswerBody"
+      },
+      "OralStartBody": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "voice",
+              "text"
+            ],
+            "title": "Mode",
+            "default": "text"
+          },
+          "tts": {
+            "type": "boolean",
+            "title": "Tts",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "OralStartBody"
       },
       "PlannerOptions": {
         "properties": {

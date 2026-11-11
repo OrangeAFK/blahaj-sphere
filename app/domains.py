@@ -40,6 +40,7 @@ class Domain:
     # Default competency framework (SPEC §8.1) that onboarding's framework drafter adapts to the user's goals.
     framework_template: Path | None = None
     builder: BuilderHooks | None = None
+    vocab: Path | None = None  # one term per line; joins the node's `vocab` in the speech-to-text initial_prompt (SPEC §7.6)
 
 
 def load_domain(name: str | None = None) -> Domain | None:

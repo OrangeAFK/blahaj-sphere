@@ -23,6 +23,22 @@ KEY_VALUES = {"p1": 153918.2, "p2": 1000.0}
 GRADES = {"items": [{"id": "p3", "score": 2, "quote": "reflection", "rationale": "r"}], "misconceptions": [{"text": "S11 is power", "subskill": "sparams.reflection_coefficient"}]}
 
 
+ORAL_GRADES = {"items": [{"id": "o1", "score": 2, "quote": "it sets the corner", "rationale": "r1"},
+                         {"id": "o2", "score": 3, "quote": "S11 is the reflection", "rationale": "r2"}], "misconceptions": []}  # fmt: skip
+ORAL_ANSWERS = ("it sets the corner frequency", "S11 is the reflection coefficient")
+
+
+def text_oral(lc, ad, grades=ORAL_GRADES, answers=ORAL_ANSWERS, node=901):
+    """Run the whole oral exam in text mode and finish it. No examiner script: it falls back to the key's own wording."""
+    if grades is not None:
+        ad.script.setdefault("grade_oral", []).append(grades)
+    ref = lc.store.find(node)
+    lc.oral.start(ref, "text", False)
+    for a in answers:
+        lc.oral.answer(ref, a)
+    return lc.oral_finish(node)
+
+
 class Handle:
     def log(self, _s): ...
     def progress(self, _v): ...
@@ -163,10 +179,8 @@ def test_full_flow_to_debrief_with_events_and_grades(env, tmp_path):
     assert lc.remediation(901, False)["remediation_decision"] == "declined"
     lc.proof_submit(SyncJobs(), 901)
     assert lc.view(901)["status"] == "oral" and (env / "archive/nodes/0901-rc-lowpass/proof/rc.sp").is_file()
-    assert lc.oral_info(901)["implemented"] is False
-    with pytest.raises(LifecycleError):
-        lc.oral_advance(901, "voice")
-    d = lc.oral_advance(901, "text")
+    assert lc.oral_info(901)["status"] == "none" and lc.oral_info(901)["voice"] == {"stt": False, "tts": False, "microphone": False}
+    d = text_oral(lc, ad)
     assert d["status"] == "debrief" and not d["provisional"]
     assert d["calibration"]["total"] == 2 and d["calibration"]["within"] == 1
     assert d["grades"]["status"] == "graded" and d["grades"]["items"][0]["score"] == 2
@@ -185,13 +199,13 @@ def test_grading_unavailable_is_provisional_then_retried(env, tmp_path):
     lc, ad, _ = make(env, tmp_path, {"grade_prelab_explain": [LLMError("subscription limit"), GRADES]})
     to_lab(lc)
     lc.proof_submit(SyncJobs(), 901)
-    d = lc.oral_advance(901, "text")
+    d = text_oral(lc, ad)
     assert d["provisional"] and d["grades"]["status"] == "pending" and d["calibration"]["total"] == 2
     assert lc.view(901)["provisional"]
     assert len(lc.pending_grades()) == 1
     assert lc.retry_grades(force=True) == 1
     d = lc.debrief_view(901)
-    assert not d["provisional"] and d["grades"]["status"] == "graded"
+    assert not d["provisional"] and d["grades"]["status"] == "graded" and d["oral"]["status"] == "graded"
     assert lc.pending_grades() == [] and lc.retry_grades(force=True) == 0
     assert sum(1 for e in DataStore(env).events() if e.type == "prelab_explain") == 1  # applied exactly once
 
@@ -251,5 +265,17 @@ def test_api_routes_smoke(env, tmp_path, monkeypatch):
                 break
             time.sleep(0.05)
         assert c.get("/api/nodes/901").json()["status"] == "oral"
-        assert c.post("/api/nodes/901/oral/advance", json={"mode": "text"}).json()["grades"]["status"] == "graded"
+        ad.script["grade_oral"] = [ORAL_GRADES]
+        assert c.get("/api/nodes/901/oral").json()["status"] == "none"
+        assert c.post("/api/nodes/901/oral/finish").status_code == 409  # not started
+        assert c.post("/api/nodes/901/oral/start", json={"mode": "voice"}).status_code == 409  # no voice models/mic here
+        v = c.post("/api/nodes/901/oral/start", json={"mode": "text"}).json()
+        assert v["status"] == "active" and v["turns"][0]["role"] == "examiner" and v["progress"] == {"asked": 1, "of": 2}
+        assert c.post("/api/nodes/901/oral/answer", json={"text": "  "}).status_code == 422
+        r = c.post("/api/nodes/901/oral/answer", json={"text": ORAL_ANSWERS[0]}).json()
+        assert r["examiner"]["kind"] == "question" and not r["done"]
+        r = c.post("/api/nodes/901/oral/answer", json={"text": ORAL_ANSWERS[1]}).json()
+        assert r["done"] and r["examiner"]["kind"] == "done"
+        assert c.get("/api/nodes/901/oral/audio/1").status_code == 404  # text mode: no audio
+        assert c.post("/api/nodes/901/oral/finish").json()["oral"]["status"] == "graded"
         assert c.post("/api/nodes/901/debrief/complete").json()["status"] == "done"

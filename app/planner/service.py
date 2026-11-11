@@ -12,7 +12,8 @@ from app.builder.context import learner_state, load_framework
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 MIN_OPTIONS, MAX_OPTIONS = 2, 4
 SIZE_MIN, SIZE_MAX = 15, 180  # §7.7 sizing: 15-45 min foundational, 1-3 h integrative
-KINDS = ("challenge",)  # remediation children are M8, tier exams M10
+KINDS = ("challenge",)  # tier exams M10; remediation children come from Planner.remediation_option (M7)
+REMEDIATION_KINDS = ("remediation",)
 MIN_CHALLENGES_FOR_RATE = 3  # §7.7: fewer than 3 challenge nodes -> diagnostic tier at default sizes
 
 OPTIONS_SCHEMA = {
@@ -20,6 +21,7 @@ OPTIONS_SCHEMA = {
     "properties": {"options": {"type": "array", "minItems": MIN_OPTIONS, "maxItems": MAX_OPTIONS}},
     "required": ["options"],
 }
+REMEDIATION_SCHEMA = {"type": "object", "properties": {"options": {"type": "array", "minItems": 1, "maxItems": 1}}, "required": ["options"]}
 OPTION_KEYS = ("title", "why_now", "kind", "domain", "subskills", "tier", "size_est_min")
 
 
@@ -30,7 +32,7 @@ class PlannerError(Exception):
         self.message = message
 
 
-def validate_option(o, where: str, framework, scores: dict[str, dict]) -> tuple[dict | None, list[str]]:
+def validate_option(o, where: str, framework, scores: dict[str, dict], kinds: tuple[str, ...] = KINDS) -> tuple[dict | None, list[str]]:
     """One option against the frozen framework and the learner's tiers -> (clean option, errors). Also used for Rescope."""
     errors: list[str] = []
     if not isinstance(o, dict):
@@ -42,8 +44,8 @@ def validate_option(o, where: str, framework, scores: dict[str, dict]) -> tuple[
     for k in ("title", "why_now"):
         if not isinstance(o[k], str) or not o[k].strip():
             errors.append(f"{where}: `{k}` must be a non-empty string")
-    if o["kind"] not in KINDS:
-        errors.append(f"{where}: kind must be one of {list(KINDS)}")
+    if o["kind"] not in kinds:
+        errors.append(f"{where}: kind must be one of {list(kinds)}")
     dom = domains.get(o["domain"])
     if dom is None:
         errors.append(f"{where}: domain {o['domain']!r} is not in the framework {sorted(domains)}")
@@ -137,6 +139,28 @@ class Planner:
             msgs = [system, user, {"role": "assistant", "content": res.text},
                     {"role": "user", "content": "Those options are invalid:\n- " + "\n- ".join(errors) + "\nReturn the corrected JSON only."}]
         raise PlannerError(502, "planner options invalid after retry: " + "; ".join(errors))
+
+    def remediation_option(self, remediation: dict) -> dict:
+        """One kind=remediation option for a failed oral (SPEC §7.6): `remediation` = {parent, failed_items, misconceptions}.
+        Same validation as options, one repair attempt; not stored (the caller keeps it with the failing node)."""
+        fw = load_framework(self.root)
+        inp = {**self.planner_input(), "remediation": remediation}
+        system = {"role": "system", "content": (PROMPTS / "planner.md").read_text(encoding="utf-8").replace("{domain_pack}", self.domain_pack)}
+        user = {"role": "user", "content": json.dumps(inp, ensure_ascii=False)}
+        msgs = [system, user]
+        errors: list[str] = []
+        for _ in range(2):
+            res = self.router.complete("plan_branches", msgs, schema=REMEDIATION_SCHEMA)
+            opts = res.json.get("options") if isinstance(res.json, dict) else None
+            if not isinstance(opts, list) or len(opts) != 1:
+                errors = ["`options` must be a list with exactly one remediation option"]
+            else:
+                opt, errors = validate_option(opts[0], "option 1", fw, inp["scores"], REMEDIATION_KINDS)
+                if opt is not None:
+                    return opt
+            msgs = [system, user, {"role": "assistant", "content": res.text},
+                    {"role": "user", "content": "That option is invalid:\n- " + "\n- ".join(errors) + "\nReturn the corrected JSON only."}]
+        raise PlannerError(502, "remediation option invalid after retry: " + "; ".join(errors))
 
     def _save(self, out: dict) -> None:
         p = self.options_path
