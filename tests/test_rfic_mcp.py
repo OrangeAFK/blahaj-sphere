@@ -16,7 +16,7 @@ def store(tmp_path):
 
 @pytest.fixture
 def tools(fake, store):
-    return RficTools(fake, store, node="n1")
+    return RficTools(fake, store, node="t1/archive/nodes/n1")
 
 
 def rpc(server, method, params=None, id=1):
@@ -97,8 +97,8 @@ def test_pinned_node_paths_are_relative_to_node_dir_and_sandboxed(tools, nodes_r
     assert r["written"] == "workspace/a.txt"
     assert (nodes_root / "n1" / "workspace" / "a.txt").read_text() == "hi"
     # tolerated: nodes-root-relative spelling of the same file
-    assert tools.read_file("n1/workspace/a.txt")["content"] == "hi"
-    for bad in ["../n2/workspace/x", "../../x", "/etc/passwd", "/work/nodes/n2/workspace/x", str(nodes_root / "n2" / "workspace" / "x"), "\\etc\\passwd"]:
+    assert tools.read_file("t1/archive/nodes/n1/workspace/a.txt")["content"] == "hi"
+    for bad in ["../n2/workspace/x", "../../x", "/etc/passwd", "/work/tracks/t1/archive/nodes/n2/workspace/x", str(nodes_root / "n2" / "workspace" / "x"), "\\etc\\passwd"]:
         with pytest.raises(ToolError):
             tools.write_file(bad, "pwn")
     assert not (nodes_root / "n2" / "workspace" / "x").exists()
@@ -109,7 +109,7 @@ def test_pinned_node_paths_are_relative_to_node_dir_and_sandboxed(tools, nodes_r
 
 def test_unpinned_server_uses_nodes_root_relative_paths(fake, store, nodes_root):
     t = RficTools(fake, store)
-    t.write_file("n2/workspace/b.txt", "x")
+    t.write_file("t1/archive/nodes/n2/workspace/b.txt", "x")
     assert (nodes_root / "n2" / "workspace" / "b.txt").exists()
     with pytest.raises(ToolError):
         t.write_file("../outside", "x")
@@ -144,12 +144,12 @@ def test_run_ngspice_translates_paths_reads_log_and_records_job(tools, fake, nod
     fake.exec_lines = ["Batch mode\n"]
     out = tools.run_ngspice("workspace/rc.sp", pdk="sky130A", timeout_min=2)
     call_ = fake.exec_calls[0]
-    assert call_["argv"] == ["ngspice", "-b", "-o", "/work/nodes/n1/workspace/rc.log", "/work/nodes/n1/workspace/rc.sp"]
-    assert (call_["workdir"], call_["pdk"], call_["timeout"]) == ("/work/nodes/n1/workspace", "sky130A", 120)
+    assert call_["argv"] == ["ngspice", "-b", "-o", "/work/tracks/t1/archive/nodes/n1/workspace/rc.log", "/work/tracks/t1/archive/nodes/n1/workspace/rc.sp"]
+    assert (call_["workdir"], call_["pdk"], call_["timeout"]) == ("/work/tracks/t1/archive/nodes/n1/workspace", "sky130A", 120)
     assert out["ok"] and out["log_file"] == "workspace/rc.log" and "f3db" in out["log_tail"]
     assert out["files_changed"] == ["rc.log"]
     (job,) = store.list_jobs()
-    assert (job.type, job.node_id, job.status, job.external) == ("sim.ngspice", "n1", "done", True)
+    assert (job.type, job.node_id, job.status, job.external) == ("sim.ngspice", "t1/n1", "done", True)
     assert "Batch mode" in job.log_tail and job.log_tail[0].startswith("$ ngspice")
 
 
@@ -180,7 +180,7 @@ def test_timeout_marks_job_failed(tools, fake, nodes_root, store):
 
 def test_run_openems_reports_progress_to_a_supplied_job(fake, nodes_root, store):
     (nodes_root / "n1" / "workspace" / "sim.py").write_text("x")
-    t = RficTools(fake, jobs=None, node="n1")
+    t = RficTools(fake, jobs=None, node="t1/archive/nodes/n1")
     job = store.create("sim.openems", "n1", status="running")
     from app.jobs.store import JobHandle
 
@@ -196,7 +196,7 @@ def test_run_python_passes_args_and_headless_matplotlib(tools, fake, nodes_root)
     (nodes_root / "n1" / "workspace" / "p.py").write_text("x")
     tools.run_python("workspace/p.py", args=["--n", "3"])
     c = fake.exec_calls[0]
-    assert c["argv"] == ["python3", "-u", "/work/nodes/n1/workspace/p.py", "--n", "3"] and c["env"]["MPLBACKEND"] == "Agg"
+    assert c["argv"] == ["python3", "-u", "/work/tracks/t1/archive/nodes/n1/workspace/p.py", "--n", "3"] and c["env"]["MPLBACKEND"] == "Agg"
 
 
 def _checker_writes(fake, nodes_root, payload):
@@ -214,7 +214,7 @@ def _checker_writes(fake, nodes_root, payload):
 def test_run_checker_follows_spec_5_2_contract(tools, fake, nodes_root):
     n1 = nodes_root / "n1"
     with pytest.raises(ToolError, match="no checker"):
-        tools.run_checker("n1", "workspace")
+        tools.run_checker("t1/archive/nodes/n1", "workspace")
     (n1 / "checker.py").write_text("x")
     (n1 / "node.md").write_text("---\nid: 1\npdk: sky130\n---\nbrief\n")
     (n1 / "_hidden" / "reference_solution").mkdir(parents=True)
@@ -222,13 +222,13 @@ def test_run_checker_follows_spec_5_2_contract(tools, fake, nodes_root):
     out = tools.run_checker(target="reference")
     assert out["verdict"] == "pass" and out["ok"] and out["result"]["metrics"] == {"gain_db": 20}
     c = fake.exec_calls[0]
-    assert c["argv"] == ["python3", "-u", "/work/nodes/n1/checker.py", "--work", "/work/nodes/n1/_hidden/reference_solution",
-                         "--out", "/work/nodes/n1/_hidden/.checker/reference_result.json"]  # fmt: skip
-    assert c["workdir"] == "/work/nodes/n1" and c["pdk"] == "sky130A"
+    assert c["argv"] == ["python3", "-u", "/work/tracks/t1/archive/nodes/n1/checker.py", "--work", "/work/tracks/t1/archive/nodes/n1/_hidden/reference_solution",
+                         "--out", "/work/tracks/t1/archive/nodes/n1/_hidden/.checker/reference_result.json"]  # fmt: skip
+    assert c["workdir"] == "/work/tracks/t1/archive/nodes/n1" and c["pdk"] == "sky130A"
 
     fake.next_result = ExecResult(1, "", "")
     assert tools.run_checker(target="workspace")["verdict"] == "fail"
-    assert fake.exec_calls[-1]["argv"][4] == "/work/nodes/n1/workspace"
+    assert fake.exec_calls[-1]["argv"][4] == "/work/tracks/t1/archive/nodes/n1/workspace"
     fake.next_result = ExecResult(2, "", "missing tool")
     assert tools.run_checker(target="workspace")["verdict"] == "error"
     fake.exec_hook = None  # exit 0 without a result file is an error, not a pass
@@ -237,11 +237,11 @@ def test_run_checker_follows_spec_5_2_contract(tools, fake, nodes_root):
     out = tools.run_checker(target="workspace")
     assert out["verdict"] == "error" and "no result file" in out["problem"]
     with pytest.raises(ToolError):
-        tools.run_checker("n2", "workspace")  # pinned to n1
+        tools.run_checker("t1/archive/nodes/n2", "workspace")  # pinned to n1
     with pytest.raises(ToolError):
-        tools.run_checker("n1", "everything")
+        tools.run_checker("t1/archive/nodes/n1", "everything")
     with pytest.raises(ToolError, match="inside the node"):
-        tools.run_checker_at("n1", "../n2/workspace", "x.json", 10)
+        tools.run_checker_at("t1/archive/nodes/n1", "../n2/workspace", "x.json", 10)
 
 
 def test_reference_solution_files_run_in_their_own_dir(tools, fake, nodes_root):
@@ -251,7 +251,7 @@ def test_reference_solution_files_run_in_their_own_dir(tools, fake, nodes_root):
     (nodes_root / "n1" / "workspace" / "a.sp").write_text("x")
     tools.run_ngspice("_hidden/reference_solution/a.sp")
     tools.run_ngspice("workspace/a.sp")
-    assert [c["workdir"] for c in fake.exec_calls] == ["/work/nodes/n1/_hidden/reference_solution", "/work/nodes/n1/workspace"]
+    assert [c["workdir"] for c in fake.exec_calls] == ["/work/tracks/t1/archive/nodes/n1/_hidden/reference_solution", "/work/tracks/t1/archive/nodes/n1/workspace"]
 
 
 def test_delete_file_is_sandboxed_and_protects_layout(tools, nodes_root):
@@ -270,7 +270,7 @@ def test_delete_file_is_sandboxed_and_protects_layout(tools, nodes_root):
     for protected in (".", "workspace", "_hidden", "_hidden/reference_solution", "workspace/../_hidden"):
         is_err, body = call(s, "delete_file", {"path": protected, "recursive": True})
         assert is_err and "protected" in body["error"], protected
-    for outside in ("../n2/keep.txt", "n2/keep.txt", "/etc/passwd", "/work/nodes/n2/keep.txt"):
+    for outside in ("../n2/keep.txt", "n2/keep.txt", "/etc/passwd", "/work/tracks/t1/archive/nodes/n2/keep.txt"):
         assert call(s, "delete_file", {"path": outside})[0], outside
     assert (nodes_root / "n2" / "keep.txt").exists() and (n1 / "workspace").is_dir()
     assert call(s, "delete_file", {"path": "workspace/nope"})[0]
@@ -292,7 +292,7 @@ def test_parse_touchstone_and_pdk_listing_wrap_container_python(tools, fake, nod
     fake.next_result = ExecResult(0, "warn line\n" + json.dumps({"f_hz": [1.0], "S": []}), "")
     assert tools.parse_touchstone("workspace/x.s2p", max_points=10)["f_hz"] == [1.0]
     c = fake.exec_calls[0]
-    assert c["argv"] == ["python3", "-", "/work/nodes/n1/workspace/x.s2p", "10"] and "skrf" in c["input"]
+    assert c["argv"] == ["python3", "-", "/work/tracks/t1/archive/nodes/n1/workspace/x.s2p", "10"] and "skrf" in c["input"]
     fake.next_result = ExecResult(0, json.dumps({"error": "unknown pdk 'zz'", "available": ["sky130A"]}), "")
     with pytest.raises(ToolError, match="available: sky130A"):
         tools.list_pdk_models("zz")
@@ -305,16 +305,16 @@ def test_parse_touchstone_and_pdk_listing_wrap_container_python(tools, fake, nod
 
 def test_job_bookkeeping_failure_never_breaks_a_sim(fake, nodes_root, store, monkeypatch):
     (nodes_root / "n1" / "workspace" / "a.sp").write_text("x")
-    t = RficTools(fake, store, node="n1")
+    t = RficTools(fake, store, node="t1/archive/nodes/n1")
     monkeypatch.setattr(store, "begin_external", lambda *a, **k: 1 / 0)
     assert t.run_ngspice("workspace/a.sp")["exit_code"] == 0
 
 
-def test_mcp_config_points_at_this_python_and_repo(tmp_path, nodes_root):
+def test_mcp_config_points_at_this_python_and_repo(tmp_path, tracks_root):
     from domains.rfic.tools_mcp.config import REPO_ROOT, mcp_config, tool_names
 
-    cfg = mcp_config(nodes_root, "n1", tmp_path)["mcpServers"]["rfic"]
-    assert cfg["args"][:4] == ["-X", "utf8", "-m", "domains.rfic.tools_mcp"] and cfg["args"][cfg["args"].index("--node") + 1] == "n1"
+    cfg = mcp_config(tracks_root, "t1/archive/nodes/n1", tmp_path)["mcpServers"]["rfic"]
+    assert cfg["args"][:4] == ["-X", "utf8", "-m", "domains.rfic.tools_mcp"] and cfg["args"][cfg["args"].index("--node") + 1] == "t1/archive/nodes/n1"
     assert cfg["env"]["PYTHONPATH"] == str(REPO_ROOT) and (REPO_ROOT / "domains" / "rfic" / "tools_mcp" / "__main__.py").exists()
     assert "mcp__rfic__run_ngspice" in tool_names()
 
@@ -331,7 +331,7 @@ def test_openems_progress_uses_energy_decay_when_step_limit_is_the_default(fake,
         "[@ 9s] Timestep: 2040 || Speed: 9 MC/s (4.9e-03 s/TS) || Energy: ~3.19e-17 (-30.00dB)\n",
         "[@ 12s] Timestep: 3060 || Speed: 9 MC/s (4.9e-03 s/TS) || Energy: ~1.0e-15 (- 10.00dB)\n",  # energy re-rises: never go backwards
     ]
-    RficTools(fake, jobs=None, node="n1").run_openems("workspace/sim.py", job=JobHandle(store, job.id))
+    RficTools(fake, jobs=None, node="t1/archive/nodes/n1").run_openems("workspace/sim.py", job=JobHandle(store, job.id))
     assert store.get(job.id).progress == 0.5  # 30 dB of an assumed 60 dB, not 3060/1e9
 
 

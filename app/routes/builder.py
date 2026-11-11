@@ -13,7 +13,7 @@ from app.jobs.manager import JobManager
 from app.llm.router import Router
 from app.llm.types import LLMError
 from app.planner.service import Planner, PlannerError
-from app.settings import data_dir
+from app.tracks.scope import current_scope
 
 router = APIRouter()
 _NODE_DIR = re.compile(r"^\d{4,}-[a-z0-9-]+$")
@@ -62,7 +62,8 @@ def _llm(request: Request) -> Router:
 
 def _planner(request: Request) -> Planner:
     domain = request.app.state.domain
-    return Planner(data_dir(), _llm(request), domain.name if domain else DEFAULT_DOMAIN)
+    sc = current_scope()
+    return Planner(sc.root, sc.track, _llm(request), domain.name if domain else DEFAULT_DOMAIN)
 
 
 def _builder(request: Request) -> BuildService:
@@ -70,7 +71,8 @@ def _builder(request: Request) -> BuildService:
     if domain is None:
         raise HTTPException(501, "no active domain")
     try:
-        return BuildService(data_dir(), _llm(request), domain)
+        sc = current_scope()
+        return BuildService(sc.root, sc.track, _llm(request), domain)
     except BuildError as e:
         raise HTTPException(e.status, e.message) from None
 

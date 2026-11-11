@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS cooldowns (
 );
 CREATE TABLE IF NOT EXISTS pending_grades (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  created TEXT NOT NULL, task_type TEXT NOT NULL, node_id INTEGER, request TEXT NOT NULL,
+  created TEXT NOT NULL, task_type TEXT NOT NULL, node_id INTEGER, track TEXT, request TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0, next_try REAL NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending', last_error TEXT
 );
@@ -42,6 +42,8 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.executescript(SCHEMA)
+            if "track" not in [r["name"] for r in c.execute("PRAGMA table_info(pending_grades)")]:
+                c.execute("ALTER TABLE pending_grades ADD COLUMN track TEXT")  # pre-tracks llm.db (M7.5)
 
     def _conn(self):
         c = sqlite3.connect(self.path, timeout=10)
@@ -111,20 +113,21 @@ class Store:
         return [dict(r) for r in rows]
 
     # --- grading queue (SPEC §3.1 skeleton) -----------------------------
-    def enqueue_grade(self, task_type: str, request: dict, node_id: int | None, error: str) -> int:
+    def enqueue_grade(self, task_type: str, request: dict, node_id: int | None, error: str, track: str | None = None) -> int:
         with self._conn() as c:
             cur = c.execute(
-                "INSERT INTO pending_grades(created,task_type,node_id,request,last_error,next_try) VALUES(?,?,?,?,?,?)",
-                (datetime.now(timezone.utc).isoformat(), task_type, node_id, json.dumps(request), error,
+                "INSERT INTO pending_grades(created,task_type,node_id,track,request,last_error,next_try) VALUES(?,?,?,?,?,?,?)",
+                (datetime.now(timezone.utc).isoformat(), task_type, node_id, track, json.dumps(request), error,
                  time.time() + BACKOFF_BASE_S),
             )
             return cur.lastrowid
 
-    def due_grades(self, now: float | None = None) -> list[dict]:
+    def due_grades(self, now: float | None = None, track: str | None = None) -> list[dict]:
+        """Pending grades whose backoff has elapsed; `track` keeps one learning track's rows (SPEC §8.6)."""
         with self._conn() as c:
             rows = c.execute(
-                "SELECT * FROM pending_grades WHERE status='pending' AND next_try<=? ORDER BY id",
-                (time.time() if now is None else now,),
+                "SELECT * FROM pending_grades WHERE status='pending' AND next_try<=?" + (" AND track=?" if track is not None else "") + " ORDER BY id",
+                (time.time() if now is None else now, *([track] if track is not None else [])),
             ).fetchall()
         return [dict(r) for r in rows]
 

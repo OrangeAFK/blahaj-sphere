@@ -99,11 +99,14 @@ data/
   .gitignore                     # sim outputs (*.raw, all *.sNp, openEMS dirs, __pycache__), settings.json
   tracks.yaml                    # track registry + active track id (§8.6)
   events.jsonl                   # APPEND-ONLY source of truth for evidence, all tracks (§5.8)
-  misconceptions.jsonl           # APPEND-ONLY source of truth for misconceptions, all tracks
+  misconceptions.jsonl           # APPEND-ONLY source of truth for misconceptions, all tracks (every line carries `track`; ids are per track)
   library/<book-id>/             # shared across tracks
-  _trash/                        # deleted tracks, recoverable until purged
-  builds/                        # build records, failed builds, rescope backups
+  _trash/                        # deleted/reset tracks, recoverable until purged
+  _migration/pre-tracks/         # copies of the logs taken before the M7.5 migration
+  builds/<track-id>/             # build records, failed builds, rescope backups (not mounted in the container)
+  models/                        # shared voice models: never moved by any track operation
   tracks/<track-id>/
+    sessions/ planner/ rescopes.jsonl remediation.jsonl   # per-node / per-track runtime state
     profile/goals.md
     framework/competency-v1.yaml # frozen ruler for this track (§8.1)
     archive/SUMMARY.md
@@ -280,7 +283,7 @@ User answers before workspace unlocks. Numeric answers use the fixed unit. Locke
 
 ### 7.3 Lab
 - Buttons: Open folder, Launch JupyterLab, Launch Xschem/KLayout/Qucs-S, **Run simulation** (runs node `run` commands as a job, streams output, lists produced files; Lab/Proof stages only), **Run checker** (unlimited; visibility per §5.2), Rescope.
-- **Rescope** (heavy): user gives a reason (too hard / wrong direction / objection / broken env). Agent either **edits** the node (re-gated in place; keeps stage and locked prelab; workspace resets to starter with the old workspace backed up to `data/builds/<node>/rescope-<ts>/`; restored byte-identical if re-gating fails) or **replaces** it (new node built first with `parents=[old]`, then old marked `rescoped`; failed build leaves old untouched). UI warns about the reset and links the backup. Reason logged; "too hard" counts as a failure for difficulty control (§7.7).
+- **Rescope** (heavy): user gives a reason (too hard / wrong direction / objection / broken env). Agent either **edits** the node (re-gated in place; keeps stage and locked prelab; workspace resets to starter with the old workspace backed up to `data/builds/<track>/<node>/rescope-<ts>/`; restored byte-identical if re-gating fails) or **replaces** it (new node built first with `parents=[old]`, then old marked `rescoped`; failed build leaves old untouched). UI warns about the reset and links the backup. Reason logged; "too hard" counts as a failure for difficulty control (§7.7).
 
 ### 7.4 Tutor (light tier)
 - Context injected by backend: brief, prelab questions, user's prelab answers, `hints.yaml`, current workspace text files (size-capped), last checker result, relevant library chunks (if allowed). **Never** `_hidden/`.
@@ -358,7 +361,9 @@ A **track** is an independent learning path with its own progress. One track is 
 
 **Rules:** domain/subskill IDs may repeat across tracks; scoring always filters by track. Interleaving, difficulty control and Planner use only the active track. Cross-track interleaving is a non-goal for v1. One Docker image per domain plugin; the container serves the active track's domain.
 
-**Migration (M7.5):** existing data → track `rfic-default` (name "RFIC"); add `track` to all events, misconceptions and node.md; rebuild_db; scores must match before and after.
+**Registry:** `data/tracks.yaml` = `active: <id>` + the list of tracks (id, name, domain, status, created, updated); exactly the active track has status `active`. The active track is never archived; the only non-archived track can be neither archived nor deleted (use Reset). Archived tracks must be unarchived before they can be entered. `data/models/` and `data/library/` are shared: no track operation moves, trashes or purges them. Restore is offered for deleted tracks (their id and name must be free); a reset's trash entry is kept until purged.
+
+**Migration (M7.5):** existing data → track `rfic-default` (name "RFIC"); add `track` to all events, misconceptions and node.md; rebuild_db; scores must match before and after. Runs automatically on first start (git snapshot + copies of the logs first) and via `python -m app.datastore migrate_tracks`.
 
 ## 9. Onboarding
 1. **Interview** (light, ≤ 10 questions) → `goals.md` (target capability, motivation, hours/week, background).

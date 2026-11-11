@@ -12,7 +12,7 @@ from app.lifecycle.nodes import LifecycleError
 from app.lifecycle.service import Lifecycle
 from app.llm.types import LLMError
 from app.routes.builder import _llm
-from app.settings import data_dir
+from app.tracks.scope import current_scope
 from app.voice.service import voice_for
 
 router = APIRouter()
@@ -21,7 +21,8 @@ Jobs = Annotated[JobManager, Depends(get_running_manager)]
 
 def _lc(request: Request) -> Lifecycle:
     try:
-        return Lifecycle(data_dir(), _llm(request), request.app.state.domain, voice=voice_for(request.app), jobs=manager_for(request.app))
+        sc = current_scope()
+        return Lifecycle(sc.root, sc.track, _llm(request), request.app.state.domain, voice=voice_for(request.app), jobs=manager_for(request.app))
     except LifecycleError as e:
         raise HTTPException(e.status, e.message) from None
 

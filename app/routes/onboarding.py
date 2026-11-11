@@ -8,7 +8,7 @@ from app.llm.router import Router
 from app.llm.types import GradingUnavailable, LLMError
 from app.onboarding.framework import Framework
 from app.onboarding.service import Onboarding, OnboardingError
-from app.settings import data_dir
+from app.tracks.scope import current_scope
 
 router = APIRouter(prefix="/onboarding")
 
@@ -87,8 +87,9 @@ def get_service(request: Request) -> Onboarding:
     if llm is None:
         llm = request.app.state.llm_router = Router()
     domain = request.app.state.domain
+    sc = current_scope()
     return Onboarding(
-        data_dir(), llm, domain.name if domain else DEFAULT_DOMAIN,
+        sc.root, sc.track, llm, domain.name if domain else DEFAULT_DOMAIN,
         domain.framework_template if domain else None,
     )
 

@@ -34,7 +34,7 @@ REMEDIATION_AFTER = 3  # §7.5: after 3 failed submissions, offer a remediation 
 REASONS = ("too_hard", "wrong_direction", "objection", "broken_env")
 RESCOPE_SCHEMA = {"type": "object", "properties": {"action": {"type": "string"}, "reason_class": {"type": "string"}, "changes": {"type": "string"},
                                                    "option": {"type": ["object", "null"]}}, "required": ["action", "changes"]}  # fmt: skip
-_running: set[tuple[int, str]] = set()
+_running: set[tuple[str, int, str]] = set()
 _running_lock = threading.Lock()
 
 
@@ -43,10 +43,11 @@ def _now() -> str:
 
 
 class Lifecycle:
-    def __init__(self, data_root: Path, router, domain: Domain | None, voice=None, jobs=None):
+    def __init__(self, data_root: Path, track: str, router, domain: Domain | None, voice=None, jobs=None):
         if domain is None:
             raise LifecycleError(501, "no active domain")
-        self.store = NodeStore(data_root)
+        self.track = track
+        self.store = NodeStore(data_root, track)
         self.router = router
         self.domain = domain
         self.tutor = Tutor(self.store, router, domain.name)
@@ -95,7 +96,7 @@ class Lifecycle:
     # --- prelab (§7.2) -------------------------------------------------------------------------------------
     def prelab_submit(self, node_id: int, answers: dict) -> dict:
         ref = self.store.find(node_id)
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             self.store.require(ref, "prelab")
             path = ref.path / "prelab_answers.yaml"
             if path.exists():
@@ -175,7 +176,7 @@ class Lifecycle:
                 self._release(ref, "run")
 
         try:
-            return jobs.submit("run_commands", run, node_id=ref.name)
+            return jobs.submit("run_commands", run, node_id=self.store.job_label(ref))
         except Exception:
             self._release(ref, "run")
             raise
@@ -209,14 +210,14 @@ class Lifecycle:
 
     def _claim(self, ref: NodeRef, what: str) -> None:
         with _running_lock:
-            if (ref.id, what) in _running:
+            if (ref.track, ref.id, what) in _running:
                 raise LifecycleError(409, f"a {what} run is already in progress for node {ref.id}")
-            _running.add((ref.id, what))
+            _running.add((ref.track, ref.id, what))
 
     @staticmethod
     def _release(ref: NodeRef, what: str) -> None:
         with _running_lock:
-            _running.discard((ref.id, what))
+            _running.discard((ref.track, ref.id, what))
 
     def start_check(self, jobs, node_id: int):
         """Lab "Run checker": unlimited, as a job; the result is the latest entry of GET .../checker."""
@@ -234,7 +235,7 @@ class Lifecycle:
                 self._release(ref, "checker")
 
         try:
-            return jobs.submit("checker", run, node_id=ref.name)
+            return jobs.submit("checker", run, node_id=self.store.job_label(ref))
         except Exception:
             self._release(ref, "checker")
             raise
@@ -251,7 +252,7 @@ class Lifecycle:
     def proof_submit(self, jobs, node_id: int):
         """Copy the declared proof artifacts to proof/, then run the checker as a job. No retry penalty."""
         ref = self.store.find(node_id)
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self.store.require(ref, *WORKING)
             fm = self.store.frontmatter(ref)
             arts = [str(a) for a in fm.get("proof_artifacts") or []]
@@ -276,7 +277,7 @@ class Lifecycle:
             self.store.save_session(ref, "proof", ps)
             if st == "lab":
                 self.store.transition(ref, "proof")
-        job = jobs.submit("proof_check", lambda h: self.run_proof_check(node_id, n, h), node_id=ref.name)
+        job = jobs.submit("proof_check", lambda h: self.run_proof_check(node_id, n, h), node_id=self.store.job_label(ref))
         return job, n
 
     def run_proof_check(self, node_id: int, n: int, handle=None) -> dict:
@@ -295,7 +296,7 @@ class Lifecycle:
         return rec
 
     def _finish_submission(self, ref: NodeRef, n: int, rec: dict) -> None:
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             ps = self._proof_state(ref)
             sub = next(s for s in ps["submissions"] if s["n"] == n)
             sub.update(status="done", verdict=rec["verdict"], tests=public_checker(rec)["tests"] if rec.get("tests") else [], seconds=rec.get("seconds"),
@@ -327,13 +328,13 @@ class Lifecycle:
     def remediation(self, node_id: int, accept: bool) -> dict:
         """Record the learner's answer to the remediation offer. The remediation node itself is built by M8's Planner."""
         ref = self.store.find(node_id)
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             ps = self._proof_state(ref)
             if not ps["remediation_offer"]:
                 raise LifecycleError(409, f"a remediation offer appears after {REMEDIATION_AFTER} failed submissions")
             ps["remediation_decision"] = "accepted" if accept else "declined"
             self.store.save_session(ref, "proof", ps)
-            append_jsonl(self.root / "remediation.jsonl", {"ts": _now(), "node_id": ref.id, "decision": ps["remediation_decision"]})
+            append_jsonl(self.store.layout.remediation_path, {"ts": _now(), "node_id": ref.id, "decision": ps["remediation_decision"]})
         return self.proof_view(node_id)
 
     # --- oral (§7.6): app/lifecycle/oral.py ------------------------------------------------------------------
@@ -345,7 +346,7 @@ class Lifecycle:
         """End of the exam: oral.md, move to Debrief, numeric prelab events + explanation grading, oral grading (pass rule,
         misconceptions, remediation child on a fail)."""
         ref = self.store.find(node_id)
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             self.store.require(ref, "oral")
             self.oral.require_complete(ref)
             self.oral.write_md(ref)
@@ -360,7 +361,7 @@ class Lifecycle:
     def debrief_view(self, node_id: int) -> dict:
         ref = self.store.find(node_id)
         st = self.store.require(ref, "debrief", "done")
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             d = self.debrief._state(ref)
             if st == "debrief" and (not d["numeric_done"] or d["grading"]["status"] == "none"):
                 self.debrief.finalize(ref)  # recovers a debrief entry that was interrupted
@@ -371,7 +372,7 @@ class Lifecycle:
 
     def debrief_complete(self, node_id: int) -> dict:
         ref = self.store.find(node_id)
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             self.store.require(ref, "debrief")
             self.store.transition(ref, "done")
         return self.summary(ref)
@@ -382,12 +383,12 @@ class Lifecycle:
         def apply(row, result):
             (self.oral if row.get("task_type") == "grade_oral" else self.debrief).apply_queued(row, result)
 
-        done = self.router.retry_pending_grades(apply, now=float("inf") if force else None)
+        done = self.router.retry_pending_grades(apply, now=float("inf") if force else None, track=self.track)
         return len(done)
 
     def pending_grades(self) -> list[dict]:
         return [{"id": r["id"], "task_type": r["task_type"], "node_id": r["node_id"], "attempts": r["attempts"], "last_error": r["last_error"]}
-                for r in self.router.store.pending_grades()]  # fmt: skip
+                for r in self.router.store.pending_grades() if r.get("track") == self.track]  # fmt: skip
 
     # --- rescope (§7.3) ----------------------------------------------------------------------------------------
     def rescope(self, jobs, node_id: int, reason_class: str, reason: str) -> dict:
@@ -398,12 +399,12 @@ class Lifecycle:
             raise LifecycleError(422, f"reason_class must be one of {list(REASONS)}")
         if not reason:
             raise LifecycleError(422, "say why in your own words")
-        fw = load_framework(self.root)
+        fw = load_framework(self.root, self.track)
         if fw is None:
             raise LifecycleError(409, "no frozen framework")
-        scores = domain_scores(self.root)
+        scores = domain_scores(self.root, self.track)
         fm = self.store.frontmatter(ref)
-        goals = self.root / "profile" / "goals.md"
+        goals = self.store.layout.goals_path
         inp = {
             "node": {"frontmatter": {k: fm.get(k) for k in ("id", "title", "kind", "domain", "subskills", "tier", "size_est_min", "pdk", "run", "proof_artifacts")},
                      "brief": self.store.brief(ref)},  # fmt: skip
@@ -415,7 +416,7 @@ class Lifecycle:
         msgs, errors = [system, user], []
         out = None
         for _ in range(2):  # one repair attempt, like the Planner
-            res = self.router.complete("rescope", msgs, schema=RESCOPE_SCHEMA, node_id=ref.id)
+            res = self.router.complete("rescope", msgs, schema=RESCOPE_SCHEMA, node_id=ref.id, track=self.track)
             j, errors = res.json, []
             if not isinstance(j, dict) or j.get("action") not in ("edit", "replace") or not isinstance(j.get("changes"), str) or not j["changes"].strip():
                 errors = ["`action` must be 'edit' or 'replace' and `changes` a non-empty string"]
@@ -430,7 +431,7 @@ class Lifecycle:
         if out is None:
             raise LifecycleError(502, "rescoper output invalid after retry: " + "; ".join(errors))
         try:
-            builder = BuildService(self.root, self.router, self.domain)
+            builder = BuildService(self.root, self.track, self.router, self.domain)
             return self._apply_rescope(builder, jobs, ref, stage, reason_class, reason, out)
         except BuildError as e:
             raise LifecycleError(e.status, e.message) from None
@@ -440,22 +441,22 @@ class Lifecycle:
                "changes": out["changes"], "counts_as_failure": reason_class == "too_hard"}  # §7.3/§7.7: "too hard" is a failure for difficulty control
         if out["action"] == "replace":
             def done(rec: dict) -> None:  # the old node is rescoped only once its replacement exists
-                new_dir = self.root / "archive" / "nodes" / rec["node_dir"]
-                self.store.set_scalar(NodeRef(ref.id, new_dir), "parents", [ref.id])
+                new_dir = self.store.layout.nodes_dir / rec["node_dir"]
+                self.store.set_scalar(NodeRef(ref.id, new_dir, ref.track), "parents", [ref.id])
                 self.store.set_scalar(ref, "status", "rescoped")
                 rebuild_db(self.root)
-                append_jsonl(self.root / "rescopes.jsonl", {**log, "event": "replaced", "replacement": rec["node_dir"]})
+                append_jsonl(self.store.layout.rescopes_path, {**log, "event": "replaced", "replacement": rec["node_dir"]})
                 autocommit(self.root, f"node {ref.id}: rescoped -> {rec['node_dir']}")
 
             job, plan = builder.start(jobs, out["option"], on_success=done)
-            append_jsonl(self.root / "rescopes.jsonl", {**log, "event": "requested", "replacement": plan.name})
+            append_jsonl(self.store.layout.rescopes_path, {**log, "event": "requested", "replacement": plan.name})
             return {"action": "replace", "changes": out["changes"], "job_id": job.id, "node_dir": plan.name, "node_id": plan.node_id}
         starter = self.store.session_dir(ref) / "starter"
         self.store.save_session(ref, "rescope", {"editing": True, "since": _now()})  # blocks every other action until the job ends
         try:
             job, plan, spec = builder.start_edit(
                 jobs, ref.path, out["changes"], starter if starter.is_dir() else None,
-                on_success=lambda rec: (append_jsonl(self.root / "rescopes.jsonl", {**log, "event": "edited"}),
+                on_success=lambda rec: (append_jsonl(self.store.layout.rescopes_path, {**log, "event": "edited"}),
                                         autocommit(self.root, f"node {ref.id}: rescope edit")),  # fmt: skip
                 on_done=lambda: self.store.save_session(ref, "rescope", {**self.store.session(ref, "rescope", {}), "editing": False}),
             )
@@ -464,7 +465,7 @@ class Lifecycle:
             raise
         backup = (spec.backup / "node" / "workspace").relative_to(self.root).as_posix()  # your files from before the reset
         self.store.save_session(ref, "rescope", {**self.store.session(ref, "rescope", {}), "backup": backup})
-        append_jsonl(self.root / "rescopes.jsonl", {**log, "event": "requested", "backup": backup})
+        append_jsonl(self.store.layout.rescopes_path, {**log, "event": "requested", "backup": backup})
         return {"action": "edit", "changes": out["changes"], "job_id": job.id, "node_dir": plan.name, "node_id": ref.id, "backup": backup}
 
 

@@ -112,6 +112,10 @@ class JobStore:
         where = "WHERE status IN ('queued','running')" if active_only else ""
         return self._read(f"SELECT * FROM jobs {where} ORDER BY created_ns DESC LIMIT ?", (limit,))
 
+    def active_for_track(self, track: str) -> list[Job]:
+        """Queued/running jobs whose node label is `<track>/<dir>` (see DataLayout.job_label): the track busy-guard."""
+        return [j for j in self.list_jobs(active_only=True, limit=1000) if (j.node_id or "").startswith(f"{track}/")]
+
     def changed_since(self, cursor_ns: int) -> list[Job]:
         """Jobs touched at or after `cursor_ns`, oldest change first."""
         return self._read("SELECT * FROM jobs WHERE updated_ns >= ? ORDER BY updated_ns", (cursor_ns,))

@@ -16,6 +16,7 @@ from app.competency.engine import base_value_weight
 from app.datastore.cache import rebuild_db
 from app.datastore.events import append_event, new_event
 from app.datastore.layout import DataLayout
+from tests.helpers import TRACK as T, make_data
 from app.domains import BuilderHooks, Domain
 from app.llm.config import load_routing
 from app.llm.router import Router
@@ -31,19 +32,18 @@ OPTION = {"title": "Set an RC low-pass corner", "why_now": "w", "kind": "challen
           "subskills": ["filters.rc_corner", "sparams.reflection_coefficient"], "tier": 1, "size_est_min": 20}  # fmt: skip
 
 
-def _diag(root: Path, domain: str, subskill: str, tier: int, score: int, node_id: int = 0, type_: str = "diagnostic_item") -> None:
+def _diag(root: Path, domain: str, subskill: str, tier: int, score: int, node_id: int = 0, type_: str = "diagnostic_item", track: str = T) -> None:
     v, w = base_value_weight(type_, score=score)
-    append_event(DataLayout(root).events_path, new_event(node_id=node_id, domain=domain, subskill=subskill, tier=tier, type=type_,
+    append_event(DataLayout(root).events_path, new_event(track=track, node_id=node_id, domain=domain, subskill=subskill, tier=tier, type=type_,
                                                          value=v, weight=w, grader_model="m", framework_version=1))  # fmt: skip
 
 
 @pytest.fixture
 def data(tmp_path) -> Path:
-    root = tmp_path / "data"
-    DataLayout(root).ensure()
-    FrameworkStore(root / "framework").freeze(Framework.model_validate(template_framework()))
-    (root / "profile").mkdir(exist_ok=True)
-    (root / "profile" / "goals.md").write_text("# Goals\n60 GHz LNA in SG13G2\n", encoding="utf-8")
+    root = make_data(tmp_path / "data")
+    lay = DataLayout(root, T)
+    FrameworkStore(lay.framework_dir).freeze(Framework.model_validate(template_framework()))
+    lay.goals_path.write_text("# Goals\n60 GHz LNA in SG13G2\n", encoding="utf-8")
     _diag(root, "matching", "matching.l_network", 1, 3)
     _diag(root, "matching", "matching.l_network", 2, 2)
     _diag(root, "noise", "noise.figure_cascade", 1, 2)
@@ -55,7 +55,7 @@ def data(tmp_path) -> Path:
 
 
 def _node(root: Path, nid: int, kind: str, subskills: list[str]) -> None:
-    d = DataLayout(root).node_dir(nid, f"n{nid}")
+    d = DataLayout(root, T).node_dir(nid, f"n{nid}")
     d.mkdir(parents=True)
     fm = {"id": nid, "slug": f"n{nid}", "kind": kind, "domain": subskills[0].split(".")[0], "subskills": subskills, "tier": 1, "status": "prelab"}
     (d / "node.md").write_text("---\n" + yaml.safe_dump(fm) + "---\nbrief\n", encoding="utf-8")
@@ -65,7 +65,7 @@ def _node(root: Path, nid: int, kind: str, subskills: list[str]) -> None:
 
 
 def test_stale_subskills_from_diagnostic_only(data):
-    ctx = interleaving_context(data, {"subskills": ["matching.l_network"]})
+    ctx = interleaving_context(data, T, {"subskills": ["matching.l_network"]})
     assert ctx.open_misconceptions == []
     assert ctx.stale_subskills == ["noise.figure_cascade", "noise.sources", "devices.biasing"]  # oldest evidence first, own excluded
 
@@ -74,27 +74,27 @@ def test_recent_nodes_evidence_removes_stale_and_diagnostic_is_not_a_node(data):
     _node(data, 1, "challenge", ["noise.figure_cascade"])
     _diag(data, "noise", "noise.figure_cascade", 1, 3, node_id=1, type_="oral_item")
     rebuild_db(data)
-    ctx = interleaving_context(data, {"subskills": ["passives.inductor_q"]})
+    ctx = interleaving_context(data, T, {"subskills": ["passives.inductor_q"]})
     assert ctx.stale_subskills == ["matching.l_network", "noise.sources", "devices.biasing"]
     # three newer challenge nodes push node 1 out of the window: its subskill is stale again
     for nid in (2, 3, 4):
         _node(data, nid, "challenge", ["passives.inductor_q"])
     rebuild_db(data)
-    assert "noise.figure_cascade" in interleaving_context(data, {"subskills": []}, limit=10).stale_subskills
+    assert "noise.figure_cascade" in interleaving_context(data, T, {"subskills": []}, limit=10).stale_subskills
 
 
 def test_misconceptions_come_first_and_targets_are_capped(data):
     with closing(sqlite3.connect(DataLayout(data).cache_path)) as c, c:
-        c.execute("INSERT INTO misconceptions (text, subskill, node_id, resolved) VALUES ('Q only rises', 'passives.inductor_q', 1, 0)")
-        c.execute("INSERT INTO misconceptions (text, subskill, node_id, resolved) VALUES ('old', 'noise.sources', 1, 1)")
-    ctx = interleaving_context(data, {"subskills": []}, limit=3)
+        c.execute("INSERT INTO misconceptions (track, id, text, subskill, node_id, resolved) VALUES ('rfic-default', 1, 'Q only rises', 'passives.inductor_q', 1, 0)")
+        c.execute("INSERT INTO misconceptions (track, id, text, subskill, node_id, resolved) VALUES ('rfic-default', 2, 'old', 'noise.sources', 1, 1)")
+    ctx = interleaving_context(data, T, {"subskills": []}, limit=3)
     assert ctx.open_misconceptions == [{"text": "Q only rises", "subskill": "passives.inductor_q"}]
     assert ctx.stale_subskills == ["matching.l_network", "noise.figure_cascade"]
     assert ctx.targets() == {"passives.inductor_q", "matching.l_network", "noise.figure_cascade"}
 
 
 def test_learner_state(data):
-    s = learner_state(data)
+    s = learner_state(data, T)
     assert "60 GHz" in s["goals"] and s["summary"] == "No completed nodes yet." and s["recent_nodes"] == []
     assert s["scores"]["matching"]["tier"] == 3 and s["scores"]["devices"]["tier"] == 1
 
@@ -127,7 +127,7 @@ def _router(tmp_path, adapter) -> Router:
 
 def test_planner_returns_and_stores_valid_options(data, tmp_path):
     ad = Scripted({"plan_branches": [{"options": [_opt(), _opt(domain="noise", subskills=["noise.figure_cascade"], tier=3)]}]})
-    p = Planner(data, _router(tmp_path, ad), "rfic")
+    p = Planner(data, T, _router(tmp_path, ad), "rfic")
     out = p.generate()
     assert [o["domain"] for o in out["options"]] == ["matching", "noise"] and out["model"] == "mock-model"
     assert p.last_options() == out
@@ -140,12 +140,12 @@ def test_planner_returns_and_stores_valid_options(data, tmp_path):
 def test_planner_repairs_once_with_errors_then_fails(data, tmp_path):
     bad = {"options": [_opt(subskills=["matching.nope"]), _opt(domain="devices", subskills=["devices.biasing"], tier=2)]}
     ad = Scripted({"plan_branches": [bad, {"options": [_opt(), _opt(tier=1)]}]})
-    assert len(Planner(data, _router(tmp_path, ad), "rfic").generate()["options"]) == 2
+    assert len(Planner(data, T, _router(tmp_path, ad), "rfic").generate()["options"]) == 2
     fix = ad.requests[1].messages[-1]["content"]
     assert "unknown subskills ['matching.nope']" in fix and "tier must be an integer 1..1" in fix  # devices is at T1
     ad = Scripted({"plan_branches": [bad, bad]})
     with pytest.raises(PlannerError) as e:
-        Planner(data, _router(tmp_path, ad), "rfic").generate()
+        Planner(data, T, _router(tmp_path, ad), "rfic").generate()
     assert e.value.status == 502
 
 
@@ -168,7 +168,7 @@ def test_option_validation(raw, needle):
 
 def test_planner_needs_framework_and_tiers(tmp_path):
     with pytest.raises(PlannerError) as e:
-        Planner(tmp_path, None, "rfic").planner_input()
+        Planner(tmp_path, T, None, "rfic").planner_input()
     assert e.value.status == 409
 
 
@@ -248,7 +248,7 @@ def test_build_passes_indexes_node_and_records_attempt(data, tmp_path):
     dom, state = fake_domain(tmp_path)
     fb = FakeBuilder(state)
     router, ad = _build_router(tmp_path, fb)
-    svc = BuildService(data, router, dom)
+    svc = BuildService(data, T, router, dom)
     plan = svc.prepare(OPTION)
     assert plan.node_id == 1 and plan.name == "0001-set-an-rc-low-pass-corner"
     assert plan.ctx.stale_subskills == ["matching.l_network", "noise.figure_cascade", "noise.sources", "devices.biasing"]
@@ -261,7 +261,7 @@ def test_build_passes_indexes_node_and_records_attempt(data, tmp_path):
     req = ad.requests[0]
     assert req.task_type == "build_challenge" and req.cwd == str(plan.node_dir) and req.tools == ["mcp__x__write_file"] and req.node_id == 1
     assert '"stale_subskills": [' in fb.prompts[0] and "# Builder prompt" in fb.prompts[0]
-    assert json.loads((data / "builds" / plan.name / "record.json").read_text())["passed"]
+    assert json.loads((data / "builds" / T / plan.name / "record.json").read_text())["passed"]
     with closing(sqlite3.connect(DataLayout(data).cache_path)) as c:
         assert c.execute("SELECT id, kind FROM nodes WHERE id = 1").fetchone() == (1, "challenge")  # indexed
     assert svc.prepare(OPTION).node_id == 2
@@ -271,7 +271,7 @@ def test_build_retries_with_gate_errors(data, tmp_path):
     dom, state = fake_domain(tmp_path)
     fb = FakeBuilder(state, broken=1)
     router, _ = _build_router(tmp_path, fb)
-    rec = BuildService(data, router, dom).run(BuildService(data, router, dom).prepare(OPTION))
+    rec = BuildService(data, T, router, dom).run(BuildService(data, T, router, dom).prepare(OPTION))
     assert rec["passed"] and len(rec["attempts"]) == 2
     assert "Previous attempt FAILED the gate" not in fb.prompts[0]
     assert "Previous attempt FAILED the gate" in fb.prompts[1] and "missing file: hints.yaml" in fb.prompts[1]
@@ -281,14 +281,14 @@ def test_build_failing_three_times_moves_node_aside(data, tmp_path):
     dom, state = fake_domain(tmp_path)
     fb = FakeBuilder(state, interleave="filters.rc_corner")  # flagged item on a non-target subskill: gate 4 fails every time
     router, ad = _build_router(tmp_path, fb)
-    svc = BuildService(data, router, dom)
+    svc = BuildService(data, T, router, dom)
     plan = svc.prepare(OPTION)
     with pytest.raises(BuildError) as e:
         svc.run(plan)
     assert "gate 4" in e.value.message and len(ad.requests) == 3
     assert not plan.node_dir.exists()
     rec = svc.load_record(plan.name)
-    assert not rec["passed"] and rec["moved_to"].startswith("builds/failed/0001-") and (data / rec["moved_to"] / "node.md").is_file()
+    assert not rec["passed"] and rec["moved_to"].startswith(f"builds/{T}/failed/0001-") and (data / rec["moved_to"] / "node.md").is_file()
     assert svc.prepare(OPTION).node_id == 2  # the failed id is not reused
 
 
@@ -303,7 +303,7 @@ def test_build_rejects_node_md_that_does_not_match_the_option(data, tmp_path):
         return out
 
     router, _ = _build_router(tmp_path, drifting)
-    svc = BuildService(data, router, dom, max_retries=0)
+    svc = BuildService(data, T, router, dom, max_retries=0)
     with pytest.raises(BuildError) as e:
         svc.run(svc.prepare(OPTION))
     assert "node.md tier must be 1 (given), got 2" in e.value.message
@@ -311,7 +311,7 @@ def test_build_rejects_node_md_that_does_not_match_the_option(data, tmp_path):
 
 def test_domain_without_builder_is_rejected(data):
     with pytest.raises(BuildError) as e:
-        BuildService(data, None, Domain(name="x", image="x", image_size_gb=0))
+        BuildService(data, T, None, Domain(name="x", image="x", image_size_gb=0))
     assert e.value.status == 501
 
 
@@ -349,7 +349,7 @@ def test_api_planner_then_build_job(data, tmp_path, monkeypatch):
             if job["status"] in ("done", "failed"):
                 break
             time.sleep(0.05)
-        assert job["status"] == "done" and job["type"] == "build_challenge" and job["node_id"] == started["node_dir"], job
+        assert job["status"] == "done" and job["type"] == "build_challenge" and job["node_id"] == f"{T}/{started['node_dir']}", job
         rec = c.get(f"/api/build/{started['node_dir']}").json()
         assert rec["passed"] and rec["gate4_hits"]
         assert c.get("/api/build/..%2Fx").status_code in (404, 422)
@@ -358,7 +358,7 @@ def test_api_planner_then_build_job(data, tmp_path, monkeypatch):
 def test_shipped_plan_branches_fixture_passes_planner_validation(data, tmp_path):
     from app.llm.adapters.mock import MockAdapter
 
-    out = Planner(data, _router(tmp_path, MockAdapter()), "rfic").generate()
+    out = Planner(data, T, _router(tmp_path, MockAdapter()), "rfic").generate()
     assert [o["domain"] for o in out["options"]] == ["matching", "noise"]
 
 
@@ -376,7 +376,7 @@ def test_dead_toolchain_aborts_without_burning_retries(data, tmp_path):
         return out
 
     router, ad = _build_router(tmp_path, crash_mid_build)
-    svc = BuildService(data, router, dom)
+    svc = BuildService(data, T, router, dom)
     plan = svc.prepare(OPTION)
     with pytest.raises(BuildError) as e:
         svc.run(plan)
@@ -405,7 +405,7 @@ def test_fidelity_review_runs_last_and_its_failure_is_fed_back(data, tmp_path):
     bad = review(fail="metrics_simulated", quote="R1 a b 1k")  # quoted from the reference netlist
     bad["checks"][1]["file"] = "_hidden/reference_solution/rc.sp"
     router, ad = _build_router(tmp_path, fb, reviews=[bad, review()])
-    svc = BuildService(data, router, dom)
+    svc = BuildService(data, T, router, dom)
     rec = svc.run(svc.prepare(OPTION))
     assert rec["passed"] and len(rec["attempts"]) == 2
     a1 = rec["attempts"][0]
@@ -421,7 +421,7 @@ def test_fidelity_review_runs_last_and_its_failure_is_fed_back(data, tmp_path):
 def test_fidelity_review_is_skipped_when_code_gates_fail(data, tmp_path):
     dom, state = fake_domain(tmp_path)
     router, ad = _build_router(tmp_path, FakeBuilder(state, broken=1))
-    svc = BuildService(data, router, dom)
+    svc = BuildService(data, T, router, dom)
     assert svc.run(svc.prepare(OPTION))["passed"]
     assert [r.task_type for r in ad.requests] == ["build_challenge", "build_challenge", "review_build"]
 
@@ -429,12 +429,12 @@ def test_fidelity_review_is_skipped_when_code_gates_fail(data, tmp_path):
 def test_unverifiable_quotes(data, tmp_path):
     dom, state = fake_domain(tmp_path)
     router, _ = _build_router(tmp_path, FakeBuilder(state), reviews=[review(quote="not in any file")])
-    svc = BuildService(data, router, dom, max_retries=0)
+    svc = BuildService(data, T, router, dom, max_retries=0)
     rec = svc.run(svc.prepare(OPTION))
     assert rec["passed"] and len(rec["attempts"][0]["review"]["warnings"]) == 3  # passing quotes not verbatim: warnings
     dom, state = fake_domain(tmp_path)
     router, _ = _build_router(tmp_path, FakeBuilder(state), reviews=[review(fail="method_fidelity", quote="invented")])
-    svc = BuildService(data, router, dom, max_retries=0)
+    svc = BuildService(data, T, router, dom, max_retries=0)
     with pytest.raises(BuildError) as e:
         svc.run(svc.prepare(OPTION))
     assert "quote not found verbatim; the verdict stands" in e.value.message
@@ -445,7 +445,7 @@ def test_review_unavailable_or_malformed_aborts_without_burning_retries(data, tm
 
     dom, state = fake_domain(tmp_path)
     router, ad = _build_router(tmp_path, FakeBuilder(state), reviews=[{"checks": []}, {"verdict": "ok"}])
-    svc = BuildService(data, router, dom)
+    svc = BuildService(data, T, router, dom)
     plan = svc.prepare(OPTION)
     with pytest.raises(BuildError) as e:
         svc.run(plan)
@@ -453,7 +453,7 @@ def test_review_unavailable_or_malformed_aborts_without_burning_retries(data, tm
     assert [r.task_type for r in ad.requests] == ["build_challenge", "review_build", "review_build"]
     router, _ = _build_router(tmp_path, FakeBuilder(state), reviews=[LLMError("claude down")])
     with pytest.raises(BuildError) as e:
-        svc2 = BuildService(data, router, dom)
+        svc2 = BuildService(data, T, router, dom)
         svc2.run(svc2.prepare(OPTION))
     assert e.value.status == 503 and "claude down" in e.value.message
 
@@ -461,7 +461,7 @@ def test_review_unavailable_or_malformed_aborts_without_burning_retries(data, tm
 def test_abandon_marks_status_and_reindexes(data, tmp_path):
     dom, state = fake_domain(tmp_path)
     router, _ = _build_router(tmp_path, FakeBuilder(state))
-    svc = BuildService(data, router, dom)
+    svc = BuildService(data, T, router, dom)
     plan = svc.prepare(OPTION)
     svc.run(plan)
     svc.abandon(plan.name)

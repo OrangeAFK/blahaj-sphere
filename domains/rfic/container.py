@@ -21,7 +21,7 @@ from typing import Callable
 
 IMAGE = "rfic:1"
 CONTAINER = "blahaj-rfic"
-CONTAINER_NODES = "/work/nodes"
+CONTAINER_TRACKS = "/work/tracks"  # data/tracks is the one bind mount (SPEC §4.2); a node lives at <track>/archive/nodes/<dir>
 GUI_PORT = 6080  # host port -> noVNC (container :80)
 JUPYTER_PORT = 8888
 DISPLAY = ":1"
@@ -41,7 +41,7 @@ class ContainerError(RuntimeError):
 
 
 class PathError(ValueError):
-    """A path escaped (or never was inside) the mounted nodes directory."""
+    """A path escaped (or never was inside) the mounted tracks directory."""
 
 
 @dataclass
@@ -67,7 +67,7 @@ def _noop(_line: str) -> None:
 class ContainerManager:
     def __init__(
         self,
-        nodes_root: Path,
+        tracks_root: Path,
         *,
         image: str = IMAGE,
         name: str = CONTAINER,
@@ -76,7 +76,7 @@ class ContainerManager:
         docker: str = "docker",
         open_url: Callable[[str], object] | None = None,
     ):
-        self.nodes_root = Path(nodes_root)
+        self.tracks_root = Path(tracks_root)
         self.image, self.name = image, name
         self.gui_port, self.jupyter_port = gui_port, jupyter_port
         self.docker_bin = docker
@@ -86,43 +86,66 @@ class ContainerManager:
     # ---- path translation (the only place host <-> container paths are converted) ----
 
     def to_container(self, path: str | os.PathLike) -> str:
-        """Host path (absolute, or relative to the nodes root) or container path -> container path.
+        """Host path (absolute, or relative to the tracks root) or container path -> container path.
 
-        Raises PathError if the result would not lie inside /work/nodes."""
+        Raises PathError if the result would not lie inside /work/tracks."""
         raw = os.fspath(path)
-        if raw == CONTAINER_NODES or raw.startswith(CONTAINER_NODES + "/"):
-            rel = posixpath.relpath(posixpath.normpath(raw), CONTAINER_NODES)
+        if raw == CONTAINER_TRACKS or raw.startswith(CONTAINER_TRACKS + "/"):
+            rel = posixpath.relpath(posixpath.normpath(raw), CONTAINER_TRACKS)
         else:
-            root = self.nodes_root.resolve()
+            root = self.tracks_root.resolve()
             p = Path(raw)
             full = (p if p.is_absolute() else root / p).resolve()  # resolves symlinks and ..
             try:
                 rel = full.relative_to(root).as_posix()
             except ValueError:
-                raise PathError(f"path outside the nodes directory: {raw}") from None
+                raise PathError(f"path outside the tracks directory: {raw}") from None
         if rel == ".." or rel.startswith("../"):
-            raise PathError(f"path outside the nodes directory: {raw}")
-        return CONTAINER_NODES if rel == "." else f"{CONTAINER_NODES}/{rel}"
+            raise PathError(f"path outside the tracks directory: {raw}")
+        return CONTAINER_TRACKS if rel == "." else f"{CONTAINER_TRACKS}/{rel}"
 
     def to_host(self, container_path: str) -> Path:
         norm = posixpath.normpath(container_path)
-        if norm != CONTAINER_NODES and not norm.startswith(CONTAINER_NODES + "/"):
-            raise PathError(f"not a nodes path in the container: {container_path}")
-        rel = posixpath.relpath(norm, CONTAINER_NODES)
-        root = self.nodes_root.resolve()
+        if norm != CONTAINER_TRACKS and not norm.startswith(CONTAINER_TRACKS + "/"):
+            raise PathError(f"not a tracks path in the container: {container_path}")
+        rel = posixpath.relpath(norm, CONTAINER_TRACKS)
+        root = self.tracks_root.resolve()
         return root if rel == "." else root.joinpath(*PurePosixPath(rel).parts)
 
     @staticmethod
     def node_of(container_path: str) -> str:
-        """First path component under /work/nodes (the node dir name)."""
-        rel = posixpath.relpath(container_path, CONTAINER_NODES)
-        if rel == "." or rel.startswith(".."):
+        """The node a container path belongs to: `<track>/archive/nodes/<dir>` (the first four components under /work/tracks).
+        This token is how every tool and job names a node."""
+        rel = posixpath.relpath(container_path, CONTAINER_TRACKS)
+        parts = rel.split("/")
+        if rel == "." or rel.startswith("..") or len(parts) < 4 or parts[1:3] != ["archive", "nodes"]:
             raise PathError(f"not inside a node directory: {container_path}")
-        return rel.split("/")[0]
+        return "/".join(parts[:4])
 
     @staticmethod
-    def workspace_of(node_dir: str) -> str:
-        return f"{CONTAINER_NODES}/{node_dir}/workspace"
+    def is_node_dir(container_path: str) -> bool:
+        """True for exactly `/work/tracks/<track>/archive/nodes/<dir>`."""
+        try:
+            return container_path == f"{CONTAINER_TRACKS}/{ContainerManager.node_of(container_path)}"
+        except PathError:
+            return False
+
+    @staticmethod
+    def workspace_of(node: str) -> str:
+        return f"{CONTAINER_TRACKS}/{node}/workspace"
+
+    @staticmethod
+    def job_label(node: str) -> str:
+        """`<track>/archive/nodes/<dir>` -> `<track>/<dir>`, the label jobs carry (DataLayout.job_label)."""
+        parts = node.split("/")
+        return f"{parts[0]}/{parts[-1]}"
+
+    def node_token(self, node_dir: str | os.PathLike) -> str:
+        """Host node directory -> its node token; PathError unless it is `<tracks_root>/<track>/archive/nodes/<dir>`."""
+        c = self.to_container(node_dir)
+        if not self.is_node_dir(c):
+            raise PathError(f"not a node directory under {self.tracks_root}: {node_dir}")
+        return self.node_of(c)
 
     # ---- docker plumbing ----
 
@@ -164,12 +187,12 @@ class ContainerManager:
         raise ContainerError(f"{key} missing from container env; recreate it with remove()")
 
     def ensure_running(self) -> None:
-        """Create/start the container; idempotent. Recreates it if the nodes mount moved."""
+        """Create/start the container; idempotent. Recreates it if the tracks mount moved (or it still has the pre-tracks nodes mount)."""
         with self._lock:
-            self.nodes_root.mkdir(parents=True, exist_ok=True)
-            root = str(self.nodes_root.resolve())
+            self.tracks_root.mkdir(parents=True, exist_ok=True)
+            root = str(self.tracks_root.resolve())
             info = self._inspect()
-            if info is not None and (info["Config"].get("Labels") or {}).get("org.blahajsphere.nodes_root") != root:
+            if info is not None and (info["Config"].get("Labels") or {}).get("org.blahajsphere.tracks_root") != root:
                 self.remove()
                 info = None
             if info is None:
@@ -182,8 +205,8 @@ class ContainerManager:
                     "-p", f"127.0.0.1:{self.jupyter_port}:8888",
                     "-e", f"VNC_PW={secrets.token_urlsafe(9)}",
                     "-e", f"JUPYTER_TOKEN={secrets.token_urlsafe(24)}",
-                    "-l", f"org.blahajsphere.nodes_root={root}",
-                    "-v", f"{root}:{CONTAINER_NODES}",
+                    "-l", f"org.blahajsphere.tracks_root={root}",
+                    "-v", f"{root}:{CONTAINER_TRACKS}",
                     self.image, "--wait",
                     timeout=120,
                 )  # fmt: skip
@@ -209,7 +232,7 @@ class ContainerManager:
             "image_present": self.image_present(),
             "container": self.name,
             "running": bool(info and info["State"]["Running"]),
-            "nodes_root": str(self.nodes_root.resolve()),
+            "tracks_root": str(self.tracks_root.resolve()),
             "gui_port": self.gui_port,
             "jupyter_port": self.jupyter_port,
         }
@@ -404,7 +427,7 @@ class ContainerManager:
     # ---- JupyterLab ----
 
     def launch_jupyter(self, node: str, open_browser: bool = True) -> str:
-        """Ensure one JupyterLab (rooted at /work/nodes) is running; return the URL for the node workspace."""
+        """Ensure one JupyterLab (rooted at /work/tracks) is running; return the URL for the node workspace."""
         self.ensure_running()
         info = self._inspect()
         token = self._env(info, "JUPYTER_TOKEN")  # type: ignore[arg-type]
@@ -415,9 +438,9 @@ class ContainerManager:
             self._spawn(
                 [
                     "jupyter-lab", "--ip=0.0.0.0", "--port=8888", "--no-browser",
-                    f"--ServerApp.root_dir={CONTAINER_NODES}", f"--IdentityProvider.token={token}",
+                    f"--ServerApp.root_dir={CONTAINER_TRACKS}", f"--IdentityProvider.token={token}",
                 ],
-                workdir=CONTAINER_NODES,
+                workdir=CONTAINER_TRACKS,
             )  # fmt: skip
         deadline = time.monotonic() + 60
         while not self._http_ok(f"{base}/api"):
@@ -438,7 +461,7 @@ class ContainerManager:
             webbrowser.open(url)
 
 
-def default_nodes_root() -> Path:
+def default_tracks_root() -> Path:
     from app.settings import data_dir
 
-    return data_dir() / "archive" / "nodes"
+    return data_dir() / "tracks"

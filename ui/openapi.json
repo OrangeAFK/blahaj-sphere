@@ -1902,7 +1902,7 @@
     "/api/scores": {
       "get": {
         "summary": "Get Scores",
-        "description": "Per-domain tier and mastery from events.jsonl (the cache's scores table).",
+        "description": "Per-domain tier and mastery of the ACTIVE track, from events.jsonl (the cache's scores table).",
         "operationId": "getScores",
         "responses": {
           "200": {
@@ -1915,6 +1915,472 @@
                   },
                   "type": "array",
                   "title": "Response Getscores"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks": {
+      "get": {
+        "summary": "List Tracks",
+        "operationId": "listTracks",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Track",
+        "description": "Create a track and make it the active one; onboarding (\u00a79) then runs for it.",
+        "operationId": "createTrack",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks/trash": {
+      "get": {
+        "summary": "List Trash",
+        "operationId": "listTrash",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrashView"
+                  },
+                  "type": "array",
+                  "title": "Response Listtrash"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Purge Trash",
+        "description": "Permanently delete everything in the trash. Needs {\"confirm\": \"PURGE\"}.",
+        "operationId": "purgeTrash",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks/trash/{entry}/restore": {
+      "post": {
+        "summary": "Restore Track",
+        "operationId": "restoreTrack",
+        "parameters": [
+          {
+            "name": "entry",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks/trash/{entry}": {
+      "delete": {
+        "summary": "Purge Trash Entry",
+        "operationId": "purgeTrashEntry",
+        "parameters": [
+          {
+            "name": "entry",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks/{track_id}/activate": {
+      "post": {
+        "summary": "Activate Track",
+        "operationId": "activateTrack",
+        "parameters": [
+          {
+            "name": "track_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Track Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks/{track_id}": {
+      "patch": {
+        "summary": "Rename Track",
+        "operationId": "renameTrack",
+        "parameters": [
+          {
+            "name": "track_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Track Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Track",
+        "description": "Typed-name confirmation; the track goes to the trash and can be restored until the trash is purged.",
+        "operationId": "deleteTrack",
+        "parameters": [
+          {
+            "name": "track_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Track Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks/{track_id}/archive": {
+      "post": {
+        "summary": "Archive Track",
+        "operationId": "archiveTrack",
+        "parameters": [
+          {
+            "name": "track_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Track Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks/{track_id}/unarchive": {
+      "post": {
+        "summary": "Unarchive Track",
+        "operationId": "unarchiveTrack",
+        "parameters": [
+          {
+            "name": "track_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Track Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tracks/{track_id}/reset": {
+      "post": {
+        "summary": "Reset Track",
+        "description": "Move the track's nodes, events and misconceptions to the trash (goals kept unless keep_goals=false); onboarding re-runs.",
+        "operationId": "resetTrack",
+        "parameters": [
+          {
+            "name": "track_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Track Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -2402,9 +2868,9 @@
             "type": "boolean",
             "title": "Running"
           },
-          "nodes_root": {
+          "tracks_root": {
             "type": "string",
-            "title": "Nodes Root"
+            "title": "Tracks Root"
           },
           "gui_port": {
             "type": "integer",
@@ -2421,11 +2887,79 @@
           "image_present",
           "container",
           "running",
-          "nodes_root",
+          "tracks_root",
           "gui_port",
           "jupyter_port"
         ],
         "title": "ContainerStatus"
+      },
+      "CreateBody": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "domain": {
+            "type": "string",
+            "title": "Domain",
+            "default": "rfic"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateBody"
+      },
+      "CurrentNode": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "title": "CurrentNode"
+      },
+      "DeleteBody": {
+        "properties": {
+          "confirm_name": {
+            "type": "string",
+            "title": "Confirm Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirm_name"
+        ],
+        "title": "DeleteBody"
       },
       "DiagnosticDomain": {
         "properties": {
@@ -3472,6 +4006,35 @@
         ],
         "title": "ProbeView"
       },
+      "PurgeBody": {
+        "properties": {
+          "confirm": {
+            "type": "string",
+            "title": "Confirm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirm"
+        ],
+        "title": "PurgeBody"
+      },
+      "PurgeResult": {
+        "properties": {
+          "purged": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Purged"
+          }
+        },
+        "type": "object",
+        "required": [
+          "purged"
+        ],
+        "title": "PurgeResult"
+      },
       "RemediationBody": {
         "properties": {
           "accept": {
@@ -3484,6 +4047,19 @@
           "accept"
         ],
         "title": "RemediationBody"
+      },
+      "RenameBody": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "RenameBody"
       },
       "RescopeBody": {
         "properties": {
@@ -3546,6 +4122,17 @@
           "node_id"
         ],
         "title": "RescopeStarted"
+      },
+      "ResetBody": {
+        "properties": {
+          "keep_goals": {
+            "type": "boolean",
+            "title": "Keep Goals",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "ResetBody"
       },
       "RunRequest": {
         "properties": {
@@ -3667,6 +4254,188 @@
           "assist_reveal"
         ],
         "title": "ShowMeReply"
+      },
+      "TrackView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "created": {
+            "type": "string",
+            "title": "Created"
+          },
+          "updated": {
+            "type": "string",
+            "title": "Updated"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "nodes": {
+            "type": "integer",
+            "title": "Nodes"
+          },
+          "current_node": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentNode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tiers": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Tiers"
+          },
+          "mastery": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Mastery"
+          },
+          "last_activity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "domain",
+          "status",
+          "active",
+          "created",
+          "updated",
+          "stage",
+          "nodes",
+          "current_node",
+          "tiers",
+          "mastery",
+          "last_activity"
+        ],
+        "title": "TrackView"
+      },
+      "TracksView": {
+        "properties": {
+          "active": {
+            "type": "string",
+            "title": "Active"
+          },
+          "tracks": {
+            "items": {
+              "$ref": "#/components/schemas/TrackView"
+            },
+            "type": "array",
+            "title": "Tracks"
+          },
+          "trash": {
+            "items": {
+              "$ref": "#/components/schemas/TrashView"
+            },
+            "type": "array",
+            "title": "Trash"
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Domains"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "tracks",
+          "trash",
+          "domains"
+        ],
+        "title": "TracksView"
+      },
+      "TrashView": {
+        "properties": {
+          "entry": {
+            "type": "string",
+            "title": "Entry"
+          },
+          "track_id": {
+            "type": "string",
+            "title": "Track Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "trashed_at": {
+            "type": "string",
+            "title": "Trashed At"
+          },
+          "events": {
+            "type": "integer",
+            "title": "Events"
+          },
+          "misconceptions": {
+            "type": "integer",
+            "title": "Misconceptions"
+          },
+          "restorable": {
+            "type": "boolean",
+            "title": "Restorable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entry",
+          "track_id",
+          "name",
+          "domain",
+          "kind",
+          "trashed_at",
+          "events",
+          "misconceptions",
+          "restorable"
+        ],
+        "title": "TrashView"
       },
       "TutorBody": {
         "properties": {

@@ -31,6 +31,7 @@ class Event:
 
     id: str
     ts: str
+    track: str
     node_id: int
     domain: str
     subskill: str

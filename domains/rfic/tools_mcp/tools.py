@@ -16,7 +16,7 @@ from typing import Callable
 
 from app.builder.nodefile import NodeFileError, read_node_md
 from app.jobs.store import JobHandle, JobStore
-from domains.rfic.container import CONTAINER_NODES, ContainerError, ContainerManager, ExecResult, PathError
+from domains.rfic.container import CONTAINER_TRACKS, ContainerError, ContainerManager, ExecResult, PathError
 
 TAIL_CHARS = 8000
 READ_MAX = 200_000
@@ -142,13 +142,14 @@ class RficTools:
             raise ToolError("empty or invalid path")
         raw = path
         if self.node:
-            if raw[:1] in ("/", "\\") and not raw.startswith(CONTAINER_NODES):
+            if raw[:1] in ("/", "\\") and not raw.startswith(CONTAINER_TRACKS):
                 raise ToolError(f"absolute path outside the node directory: {path}")  # (Windows doesn't call "/x" absolute)
-            is_abs = raw.startswith(CONTAINER_NODES) or Path(raw).is_absolute()
+            is_abs = raw.startswith(CONTAINER_TRACKS) or Path(raw).is_absolute()
             if not is_abs:
-                root = self.containers.nodes_root
-                # Tolerate nodes-root-relative paths ("<node>/workspace/x") when unambiguous.
-                if raw.replace("\\", "/").split("/")[0] == self.node and not (root / self.node / self.node).exists():
+                root = self.containers.tracks_root
+                # Tolerate tracks-root-relative paths ("<node token>/workspace/x") when unambiguous.
+                norm = raw.replace("\\", "/")
+                if (norm == self.node or norm.startswith(self.node + "/")) and not (root / self.node / self.node).exists():
                     pass
                 else:
                     raw = f"{self.node}/{raw}"
@@ -171,7 +172,7 @@ class RficTools:
     def _rel_to_node(self, host: Path) -> str:
         c = self.containers.to_container(host)
         node = self.containers.node_of(c)
-        return posixpath.relpath(c, f"{CONTAINER_NODES}/{node}")
+        return posixpath.relpath(c, f"{CONTAINER_TRACKS}/{node}")
 
     def _snapshot(self, workspace: Path) -> dict[str, tuple[int, int]]:
         snap: dict[str, tuple[int, int]] = {}
@@ -207,7 +208,7 @@ class RficTools:
         own: JobHandle | None = None
         if job is None and self.jobs is not None:
             try:
-                own = self.jobs.begin_external(type_, node)
+                own = self.jobs.begin_external(type_, self.containers.job_label(node))
             except Exception:  # bookkeeping must never break a simulation
                 own = None
         h = job or own
@@ -242,7 +243,7 @@ class RficTools:
     def _workdir_for(self, c: str) -> str | None:
         """Files in the reference solution run there, so their relative outputs never land in the
         learner's workspace; everything else runs in workspace/ (SPEC §4.2)."""
-        ref = f"{CONTAINER_NODES}/{self.containers.node_of(c)}/{CHECKER_TARGETS['reference']}"
+        ref = f"{CONTAINER_TRACKS}/{self.containers.node_of(c)}/{CHECKER_TARGETS['reference']}"
         return ref if c.startswith(ref + "/") else None
 
     @staticmethod
@@ -350,7 +351,7 @@ class RficTools:
         Paths are relative to the node dir. Exit 0/1/2 -> verdict pass/fail/error (§5.2); a timeout
         or a missing/unparseable result file is also `error`."""
         node_c = self._cpath(node)
-        if posixpath.dirname(node_c) != CONTAINER_NODES:
+        if not self.containers.is_node_dir(node_c):
             raise ToolError(f"not a node directory: {node}")
         node_host = self.containers.to_host(node_c)
         if not (node_host / "checker.py").is_file():
@@ -400,7 +401,7 @@ class RficTools:
 
         Stops at the first non-zero exit. Output streams to the job; `files_changed` lists what the whole run wrote."""
         node_c = self._cpath(node)
-        if posixpath.dirname(node_c) != CONTAINER_NODES:
+        if not self.containers.is_node_dir(node_c):
             raise ToolError(f"not a node directory: {node}")
         name = self.containers.node_of(node_c)
         pdk = node_pdk(self.containers.to_host(node_c))
@@ -461,7 +462,7 @@ class RficTools:
         """Delete a file (or, with recursive=True, a directory tree) inside the node directory.
         The node directory itself and its top-level layout dirs (workspace/, _hidden/, the reference) are protected."""
         c = self._cpath(path)
-        node_c = f"{CONTAINER_NODES}/{self.containers.node_of(c)}"
+        node_c = f"{CONTAINER_TRACKS}/{self.containers.node_of(c)}"
         rel = posixpath.relpath(c, node_c)
         if rel in (".", "workspace", "_hidden", CHECKER_TARGETS["reference"]):
             raise ToolError(f"refusing to delete a protected node directory: {rel}")

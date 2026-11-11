@@ -18,6 +18,7 @@ from app.onboarding.framework import Framework, FrameworkStore
 from app.voice.service import Voice
 from app.voice.stt import SAMPLE_RATE, Transcript, VoiceUnavailable, build_prompt
 from tests.test_builder_m5 import _diag
+from tests.helpers import TRACK as T
 from tests.test_lifecycle import ANSWERS, GRADES, SyncJobs, env, make, to_lab  # noqa: F401 (env = fixture)
 from tests.test_onboarding import template_framework
 
@@ -35,16 +36,23 @@ CLEAN = {"p1": 150000, "p2": 1002, "p3": "S11 is the reflection coefficient"}  #
 NODE = "0901-rc-lowpass"
 
 
+def prepare_oral(env, track=T):
+    """A frozen framework, a goals file, scores and a bigger oral key for node 901 of `track` (which seed_node created)."""
+    lay = DataLayout(env, track)
+    if not FrameworkStore(lay.framework_dir).is_frozen():
+        FrameworkStore(lay.framework_dir).freeze(Framework.model_validate(template_framework()))
+    lay.goals_path.write_text("# Goals\n60 GHz LNA\n", encoding="utf-8")
+    for dom, sub in (("matching", "matching.l_network"), ("noise", "noise.figure_cascade"), ("devices", "devices.biasing")):
+        _diag(env, dom, sub, 1, 2, track=track)
+    (lay.nodes_dir / NODE / "_hidden" / "oral_key.yaml").write_text(yaml.safe_dump({"items": KEY}, sort_keys=False))
+    rebuild_db(env)
+    return env
+
+
 @pytest.fixture
 def oral_env(env):
     """env (node 901 at stage oral soon) + a frozen framework, a goals file, scores, and a bigger oral key."""
-    FrameworkStore(env / "framework").freeze(Framework.model_validate(template_framework()))
-    (env / "profile" / "goals.md").write_text("# Goals\n60 GHz LNA\n", encoding="utf-8")
-    for dom, sub in (("matching", "matching.l_network"), ("noise", "noise.figure_cascade"), ("devices", "devices.biasing")):
-        _diag(env, dom, sub, 1, 2)
-    (env / "archive/nodes" / NODE / "_hidden" / "oral_key.yaml").write_text(yaml.safe_dump({"items": KEY}, sort_keys=False))
-    rebuild_db(env)
-    return env
+    return prepare_oral(env)
 
 
 def to_oral(lc, answers=ANSWERS):
@@ -91,7 +99,7 @@ def test_missed_prelab_gives_five_core_missed_subskills_first(oral_env, tmp_path
 
 
 def test_no_interleaved_item_in_the_key_means_core_only(oral_env, tmp_path):
-    (oral_env / "archive/nodes" / NODE / "_hidden" / "oral_key.yaml").write_text(yaml.safe_dump({"items": KEY[:3]}, sort_keys=False))
+    (DataLayout(oral_env, T).nodes_dir / NODE / "_hidden" / "oral_key.yaml").write_text(yaml.safe_dump({"items": KEY[:3]}, sort_keys=False))
     lc, _, _ = make(oral_env, tmp_path)
     ref = to_oral(lc, CLEAN)
     assert lc.oral.start(ref, "text", False)["plan"] == {"n_core": 2, "n_interleaved": 0, "reason": "all numeric prelab answers were within tolerance"}
@@ -191,15 +199,15 @@ def test_pass_writes_oral_items_misconceptions_and_files(oral_env, tmp_path):
     o = d["oral"]
     assert o["status"] == "graded" and o["passed"] is True and o["mean"] == pytest.approx(2.5)
     assert [(i["id"], i["score"], i["interleaved"], i["quote"]) for i in o["items"]] == [("o1", 2, False, "quality factor"), ("o2", 3, False, "quality factor"), ("o7", 0, True, "quality factor")]
-    evs = [e for e in DataStore(oral_env).events() if e.type == "oral_item"]
+    evs = [e for e in DataStore(oral_env, T).events() if e.type == "oral_item"]
     assert [(e.subskill, e.interleaved, round(e.value, 3), e.weight) for e in evs] == [
         ("matching.l_network", False, 0.667, 1.0), ("noise.figure_cascade", False, 1.0, 1.0), ("devices.biasing", True, 0.0, 1.0)]  # fmt: skip
-    mis = fold(read_records(DataLayout(oral_env).misconceptions_path))
+    mis = fold(read_records(DataLayout(oral_env).misconceptions_path, T))
     texts = [m["text"] for m in mis if m["node_id"] == 901]
     assert "Q only rises with L" in texts and any("devices.biasing" in t and "Could not answer" in t for t in texts)  # grader's + the interleaved 0
     assert o["remediation"] is None
-    assert (oral_env / "archive/nodes" / NODE / "oral.md").read_text().count("**Learner") == 3
-    assert "Passed (mean 2.50" in (oral_env / "archive/nodes" / NODE / "debrief.md").read_text()
+    assert (DataLayout(oral_env, T).nodes_dir / NODE / "oral.md").read_text().count("**Learner") == 3
+    assert "Passed (mean 2.50" in (DataLayout(oral_env, T).nodes_dir / NODE / "debrief.md").read_text()
     # grader input: anchors present, transcript with item ids, frozen prompt as the system message
     req = [r for r in ad.requests if r.task_type == "grade_oral"][0]
     sent = json.loads(req.messages[1]["content"])
@@ -211,11 +219,12 @@ def test_failed_oral_logs_misconceptions_and_spawns_a_remediation_child(oral_env
     fake = {}
 
     class FakeBuild:
-        def __init__(self, root, router, domain):
+        def __init__(self, root, track, router, domain):
             self.root = Path(root)
+            self.track = track
 
         def start(self, jobs, option, on_success=None):
-            d = self.root / "archive" / "nodes" / "0902-remediate"
+            d = DataLayout(self.root, self.track).nodes_dir / "0902-remediate"
             d.mkdir(parents=True, exist_ok=True)
             (d / "node.md").write_text("---\n" + yaml.safe_dump({"id": 902, "slug": "remediate", "kind": option["kind"], "domain": option["domain"],
                                                                    "subskills": option["subskills"], "tier": 1, "status": "prelab"}) + "---\nb\n")  # fmt: skip
@@ -240,9 +249,9 @@ def test_failed_oral_logs_misconceptions_and_spawns_a_remediation_child(oral_env
     assert rem_in["parent"]["id"] == 901 and rem_in["failed_items"][0]["subskill"] == "matching.l_network" and rem_in["misconceptions"]
     assert fake["option"]["kind"] == "remediation"
     # misconceptions: the grader's, and the weak core answer logged so it is revisited
-    texts = [m["text"] for m in fold(read_records(DataLayout(oral_env).misconceptions_path)) if m["node_id"] == 901]
+    texts = [m["text"] for m in fold(read_records(DataLayout(oral_env).misconceptions_path, T)) if m["node_id"] == 901]
     assert "L-match always raises Q" in texts and not any(t.startswith("Weak answer") for t in texts)  # the grader already named matching.l_network
-    assert [json.loads(x)["child"] for x in (oral_env / "remediation.jsonl").read_text().splitlines()] == ["0902-remediate"]
+    assert [json.loads(x)["child"] for x in DataLayout(oral_env, T).remediation_path.read_text().splitlines()] == ["0902-remediate"]
     # the child is released -> linked to the parent
     fake["release"]()
     child = lc.store.frontmatter(lc.store.find(902))
@@ -260,7 +269,7 @@ def test_failed_oral_without_grader_misconceptions_logs_the_weak_cores(oral_env,
     run_exam(lc, ref)
     d = lc.oral_finish(901)
     assert d["oral"]["passed"] is False and d["oral"]["remediation"] == {"status": "needed"}
-    texts = [m["text"] for m in fold(read_records(DataLayout(oral_env).misconceptions_path)) if m["node_id"] == 901]
+    texts = [m["text"] for m in fold(read_records(DataLayout(oral_env).misconceptions_path, T)) if m["node_id"] == 901]
     weak = [t for t in texts if t.startswith("Weak answer")]
     assert len(weak) == 1 and "matching.l_network" in weak[0]  # only o1 scored < 2 (o2's 2 is not weak)
 
@@ -306,12 +315,12 @@ def test_unavailable_grading_is_provisional_then_applied_exactly_once(oral_env, 
     run_exam(lc, ref)
     d = lc.oral_finish(901)
     assert d["provisional"] and d["oral"]["status"] == "pending" and d["grades"]["status"] == "graded"  # explanations graded, oral pending
-    assert not [e for e in DataStore(oral_env).events() if e.type == "oral_item"]
+    assert not [e for e in DataStore(oral_env, T).events() if e.type == "oral_item"]
     assert [p["task_type"] for p in lc.pending_grades()] == ["grade_oral"]
     assert lc.retry_grades(force=True) == 1
     d = lc.debrief_view(901)
     assert not d["provisional"] and d["oral"]["status"] == "graded" and d["oral"]["passed"] is True
-    assert len([e for e in DataStore(oral_env).events() if e.type == "oral_item"]) == 3
+    assert len([e for e in DataStore(oral_env, T).events() if e.type == "oral_item"]) == 3
     assert lc.retry_grades(force=True) == 0 and lc.pending_grades() == []
 
 
@@ -335,7 +344,7 @@ def test_unusable_grader_output_is_queued_not_applied(oral_env, tmp_path):
     run_exam(lc, ref)
     d = lc.oral_finish(901)
     assert d["provisional"] and d["oral"]["status"] == "pending"
-    assert not [e for e in DataStore(oral_env).events() if e.type == "oral_item"]
+    assert not [e for e in DataStore(oral_env, T).events() if e.type == "oral_item"]
 
 
 # ---- voice turns (fake recorder, transcriber, speaker) -------------------------------------------------------------------------------

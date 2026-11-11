@@ -11,6 +11,7 @@ from app.datastore.layout import DataLayout
 from app.lifecycle.nodes import LifecycleError
 from app.lifecycle.service import Lifecycle
 from tests.test_builder_m5 import OPTION, Agent, FakeBuilder, _opt, _router, data, fake_domain, review  # noqa: F401 (data = fixture)
+from tests.helpers import TRACK as T
 from tests.test_lifecycle import ANSWERS, Handle, Job
 
 
@@ -43,11 +44,11 @@ def setup(data, tmp_path, rescope_reply, builder_cls=FakeBuilder, n_builds=4):
     edit_fb = builder_cls(state)
     ad = Agent({"build_challenge": [fb] + [edit_fb] * n_builds, "review_build": [review()] * (n_builds + 1), "rescope": [rescope_reply]})
     router = _router(tmp_path, ad)
-    rec = BuildService(data, router, dom).run(BuildService(data, router, dom).prepare(OPTION))
+    rec = BuildService(data, T, router, dom).run(BuildService(data, T, router, dom).prepare(OPTION))
     assert rec["passed"]
-    lc = Lifecycle(data, router, dom)
+    lc = Lifecycle(data, T, router, dom)
     lc.prelab_submit(1, ANSWERS)
-    ws = data / "archive/nodes/0001-set-an-rc-low-pass-corner/workspace/rc.sp"
+    ws = data / "tracks/rfic-default/archive/nodes/0001-set-an-rc-low-pass-corner/workspace/rc.sp"
     ws.write_text("R1 a b 5k\n")  # the learner's own work
     return lc, ad, fb, ws
 
@@ -66,7 +67,7 @@ def test_rescope_replace_builds_new_node_then_marks_old_rescoped(data, tmp_path)
     assert lc.view(1)["status"] == "rescoped" and lc.view(2)["status"] == "prelab"
     fm = lc.store.frontmatter(lc.store.find(2))
     assert fm["parents"] == [1]
-    log = [json.loads(l) for l in (data / "rescopes.jsonl").read_text().splitlines()]
+    log = [json.loads(l) for l in (data / "tracks/rfic-default/rescopes.jsonl").read_text().splitlines()]
     by = {l["event"]: l for l in log}  # order depends on whether the job already finished when "requested" is written
     assert set(by) == {"requested", "replaced"} and by["requested"]["counts_as_failure"] and by["replaced"]["replacement"] == out["node_dir"]
     sent = json.loads(next(r for r in ad.requests if r.task_type == "rescope").messages[1]["content"])
@@ -100,12 +101,12 @@ def test_rescope_edit_regates_in_place_and_keeps_learner_progress(data, tmp_path
     assert "Rescope EDIT" in prompt and "fix the broken include path" in prompt
     assert lc.view(1)["status"] == "lab" and (node / "prelab_answers.yaml").read_text() == answers_before  # stage and locked answers kept
     assert ws.read_text() == "R1 a b 10k\n"  # workspace reset to the original starter
-    backups = list((data / "builds/0001-set-an-rc-low-pass-corner").glob("rescope-*"))
+    backups = list((data / "builds/rfic-default/0001-set-an-rc-low-pass-corner").glob("rescope-*"))
     assert any(b.is_dir() and (b / "node/workspace/rc.sp").read_text() == "R1 a b 5k\n" for b in backups)  # the learner's old work is kept
-    rec = json.loads(next((data / "builds/0001-set-an-rc-low-pass-corner").glob("rescope-*.json")).read_text())
+    rec = json.loads(next((data / "builds/rfic-default/0001-set-an-rc-low-pass-corner").glob("rescope-*.json")).read_text())
     assert rec["passed"] and rec["edit"]["changes"].startswith("fix the broken") and rec["learner_workspace_backup"]
     assert not lc.store.session(lc.store.find(1), "rescope", {}).get("editing")
-    assert {json.loads(l)["event"] for l in (data / "rescopes.jsonl").read_text().splitlines()} == {"requested", "edited"}
+    assert {json.loads(l)["event"] for l in (data / "tracks/rfic-default/rescopes.jsonl").read_text().splitlines()} == {"requested", "edited"}
     assert lc.tutor.hints_view(lc.store.find(1))  # the node is usable again
 
 
@@ -120,7 +121,7 @@ def test_rescope_edit_that_cannot_pass_is_restored_exactly(data, tmp_path):
     after = {p.relative_to(node).as_posix(): p.read_bytes() for p in sorted(node.rglob("*")) if p.is_file()}
     assert after == before  # every file, including the learner's workspace edit and the locked answers
     assert ws.read_text() == "R1 a b 5k\n" and lc.view(1)["status"] == "lab" and lc.view(1)["prelab"]["locked"]
-    rec = json.loads(next((data / "builds/0001-set-an-rc-low-pass-corner").glob("rescope-*.json")).read_text())
+    rec = json.loads(next((data / "builds/rfic-default/0001-set-an-rc-low-pass-corner").glob("rescope-*.json")).read_text())
     assert not rec["passed"] and rec["restored_from"] and len(rec["attempts"]) == 3
     assert not lc.store.session(lc.store.find(1), "rescope", {}).get("editing")  # unblocked after the failure
 

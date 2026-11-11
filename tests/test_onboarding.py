@@ -66,7 +66,7 @@ def test_interview_writes_goals_md(tmp_path, monkeypatch):
     c.post("/api/onboarding/interview/turn", json={"answer": "an LNA"})
     v = c.post("/api/onboarding/interview/turn", json={"answer": "8"}).json()
     assert v["done"] and "60 GHz LNA" in v["goals"]
-    goals = (tmp_path / "profile" / "goals.md").read_text(encoding="utf-8")
+    goals = (tmp_path / "tracks" / "rfic-default" / "profile" / "goals.md").read_text(encoding="utf-8")
     assert "## Target capability" in goals and "thesis" in goals
     sys_msg = ad.requests[0].messages[0]
     assert sys_msg["role"] == "system" and "rfic" in sys_msg["content"]
@@ -86,7 +86,7 @@ def test_interview_is_capped_at_ten_questions(tmp_path, monkeypatch):
     assert v["done"]
     assert len(ad.requests) == 11  # 10 questions + the forced finish call
     assert "Finish now" in ad.requests[-1].messages[-1]["content"]
-    assert (tmp_path / "profile" / "goals.md").exists()
+    assert (tmp_path / "tracks" / "rfic-default" / "profile" / "goals.md").exists()
 
 
 def test_interview_unusable_reply_is_502(tmp_path, monkeypatch):
@@ -95,8 +95,8 @@ def test_interview_unusable_reply_is_502(tmp_path, monkeypatch):
 
 
 def finish_interview(c, tmp_path):
-    (tmp_path / "profile").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "profile" / "goals.md").write_text("# Goals\n60 GHz LNA", encoding="utf-8")
+    (tmp_path / "tracks" / "rfic-default" / "profile").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tracks" / "rfic-default" / "profile" / "goals.md").write_text("# Goals\n60 GHz LNA", encoding="utf-8")
 
 
 def test_framework_needs_goals(tmp_path, monkeypatch):
@@ -113,17 +113,17 @@ def test_framework_draft_edit_approve_freeze(tmp_path, monkeypatch):
     req = ad.requests[0]
     assert not req.light and req.task_type == "draft_framework"
     assert "template" in req.messages[1]["content"] and "60 GHz LNA" in req.messages[1]["content"]
-    assert (tmp_path / "framework" / "competency-v1.draft.yaml").exists()
+    assert (tmp_path / "tracks" / "rfic-default" / "framework" / "competency-v1.draft.yaml").exists()
 
     fw = v["framework"]
     fw["domains"][0]["tiers"]["1"] = "Edited by the user."
     assert c.put("/api/onboarding/framework/draft", json=fw).status_code == 200
     v = c.post("/api/onboarding/framework/approve", json={"framework": fw}).json()
     assert v["frozen"]
-    frozen = tmp_path / "framework" / "competency-v1.yaml"
+    frozen = tmp_path / "tracks" / "rfic-default" / "framework" / "competency-v1.yaml"
     data = yaml.safe_load(frozen.read_text(encoding="utf-8"))
     assert data["domains"][0]["tiers"][1] == "Edited by the user." and data["version"] == 1
-    assert not (tmp_path / "framework" / "competency-v1.draft.yaml").exists()
+    assert not (tmp_path / "tracks" / "rfic-default" / "framework" / "competency-v1.draft.yaml").exists()
     # frozen: no re-draft, edit, or second approval
     assert c.post("/api/onboarding/framework/draft").status_code == 409
     assert c.put("/api/onboarding/framework/draft", json=fw).status_code == 409
@@ -159,7 +159,7 @@ def test_framework_validation(tmp_path, monkeypatch, mutate, msg):
     mutate(fw)
     r = c.post("/api/onboarding/framework/approve", json={"framework": fw})
     assert r.status_code == 422 and msg in json.dumps(r.json())
-    assert not (tmp_path / "framework" / "competency-v1.yaml").exists()
+    assert not (tmp_path / "tracks" / "rfic-default" / "framework" / "competency-v1.yaml").exists()
 
 
 def freeze(c, tmp_path, monkeypatch=None):
@@ -224,14 +224,14 @@ def test_diagnostic_climbs_until_first_miss_and_sets_tiers(tmp_path, monkeypatch
     for dom, want in v["tiers"].items():  # the engine agrees with the stored result
         assert initial_tier([e for e in events if e.domain == dom]) == want
 
-    node = tmp_path / "archive" / "nodes" / "0000-diagnostic" / "node.md"
+    node = tmp_path / "tracks" / "rfic-default" / "archive" / "nodes" / "0000-diagnostic" / "node.md"
     fm = yaml.safe_load(node.read_text(encoding="utf-8").split("---")[1])
     assert fm["kind"] == "diagnostic" and fm["id"] == 0 and fm["status"] == "done"
     assert "Question about matching?" in node.read_text(encoding="utf-8")
     import sqlite3
     con = sqlite3.connect(tmp_path / "cache.db")
     assert con.execute("select count(*) from nodes where kind='diagnostic'").fetchone()[0] == 1
-    assert dict(con.execute("select domain, tier from scores").fetchall()) == v["tiers"]
+    assert dict(con.execute("select domain, tier from scores where track = 'rfic-default'").fetchall()) == v["tiers"]
     assert c.get("/api/onboarding/state").json()["stage"] == "done"
     # grading ran on the heavy path, dialogue on the light path
     assert all(r.light for r in ad.requests if r.task_type == "diagnostic_dialogue")
@@ -245,15 +245,15 @@ def test_refresh_tiers_applies_the_current_cap_to_an_old_result(tmp_path, monkey
     from app.datastore.events import append_event, new_event
 
     for tier in (1, 2, 3):  # an old-style 3-probe pass on the first domain: used to place at T4
-        append_event(tmp_path / "events.jsonl", new_event(node_id=0, domain=ids[0], subskill=f"{ids[0]}.x", tier=tier,
+        append_event(tmp_path / "events.jsonl", new_event(track="rfic-default", node_id=0, domain=ids[0], subskill=f"{ids[0]}.x", tier=tier,
                                                          type="diagnostic_item", value=1.0, weight=1.0))
     for d in ids[1:]:
-        append_event(tmp_path / "events.jsonl", new_event(node_id=0, domain=d, subskill=f"{d}.x", tier=1,
+        append_event(tmp_path / "events.jsonl", new_event(track="rfic-default", node_id=0, domain=d, subskill=f"{d}.x", tier=1,
                                                          type="diagnostic_item", value=0.0, weight=1.0))
     stale = {"done": True, "pending": None, "tiers": {ids[0]: 4},
              "domains": [{"id": d, "name": d, "probes": [], "done": True} for d in ids]}
-    (tmp_path / "profile").mkdir(exist_ok=True)
-    (tmp_path / "profile" / "diagnostic.json").write_text(json.dumps(stale), encoding="utf-8")
+    (tmp_path / "tracks" / "rfic-default" / "profile").mkdir(exist_ok=True)
+    (tmp_path / "tracks" / "rfic-default" / "profile" / "diagnostic.json").write_text(json.dumps(stale), encoding="utf-8")
     from app.routes.onboarding import get_service
 
     class R:  # minimal Request stand-in
@@ -261,9 +261,9 @@ def test_refresh_tiers_applies_the_current_cap_to_an_old_result(tmp_path, monkey
 
     tiers = get_service(R).refresh_tiers()
     assert tiers[ids[0]] == 3 and all(tiers[d] == 1 for d in ids[1:])
-    assert json.loads((tmp_path / "profile" / "diagnostic.json").read_text(encoding="utf-8"))["tiers"] == tiers
+    assert json.loads((tmp_path / "tracks" / "rfic-default" / "profile" / "diagnostic.json").read_text(encoding="utf-8"))["tiers"] == tiers
     import sqlite3
-    assert dict(sqlite3.connect(tmp_path / "cache.db").execute("select domain, tier from scores").fetchall())[ids[0]] == 3
+    assert dict(sqlite3.connect(tmp_path / "cache.db").execute("select domain, tier from scores where track = 'rfic-default'").fetchall())[ids[0]] == 3
     assert len((tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()) == 3 + len(ids) - 1  # events untouched
 
 
@@ -301,13 +301,13 @@ def test_unverbatim_quote_is_dropped(tmp_path, monkeypatch):
     freeze(c, tmp_path)
     c.post("/api/onboarding/diagnostic/next")
     c.post("/api/onboarding/diagnostic/answer", json={"answer": "my answer"})
-    st = json.loads((tmp_path / "profile" / "diagnostic.json").read_text(encoding="utf-8"))
+    st = json.loads((tmp_path / "tracks" / "rfic-default" / "profile" / "diagnostic.json").read_text(encoding="utf-8"))
     assert st["domains"][0]["probes"][0]["quote"] == ""
 
 
 def test_initial_tier_is_capped_at_t3():
     def d(tier):
-        return Event("i", "t", 0, "m", f"m.s{tier}", tier, "diagnostic_item", 1.0, 1.0)
+        return Event("i", "t", "tr", 0, "m", f"m.s{tier}", tier, "diagnostic_item", 1.0, 1.0)
 
     assert initial_tier([d(1), d(2)]) == 3
     assert initial_tier([d(1), d(2), d(3), d(4)]) == 3  # even if a later tier was probed and passed
@@ -315,7 +315,7 @@ def test_initial_tier_is_capped_at_t3():
 
 def test_diagnostic_pass_bar_is_two_for_single_probes():
     def d(tier, s):
-        return Event("i", "t", 0, "m", f"m.s{tier}", tier, "diagnostic_item", s / 3, 1.0)
+        return Event("i", "t", "tr", 0, "m", f"m.s{tier}", tier, "diagnostic_item", s / 3, 1.0)
 
     assert initial_tier([d(1, 2)]) == 2  # one probe scoring 2 passes T1 (the 2.3 exam bar would have failed it)
     assert initial_tier([d(1, 1)]) == 1 and initial_tier([d(1, 3), d(2, 0)]) == 2

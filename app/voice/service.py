@@ -33,22 +33,22 @@ class Voice:
         self.transcriber = transcriber or Transcriber(cpu_threads=_default_threads())
         self.speaker = speaker or Speaker()
         self._injected = transcriber is not None, speaker is not None, recorder is not None
-        self._audio: OrderedDict[tuple[int, int], bytes] = OrderedDict()
+        self._audio: OrderedDict[tuple[str, int, int], bytes] = OrderedDict()
         self._lock = threading.Lock()
 
     def status(self) -> dict:
         stt, tts, mic = self._injected
         return {"stt": stt or whisper_ready(), "tts": tts or piper_ready(), "microphone": mic or microphone_present()}
 
-    def put_audio(self, node_id: int, n: int, wav: bytes) -> None:
+    def put_audio(self, track: str, node_id: int, n: int, wav: bytes) -> None:
         with self._lock:
-            self._audio[(node_id, n)] = wav
+            self._audio[(track, node_id, n)] = wav
             while len(self._audio) > AUDIO_CACHE:
                 self._audio.popitem(last=False)
 
-    def audio(self, node_id: int, n: int) -> bytes | None:
+    def audio(self, track: str, node_id: int, n: int) -> bytes | None:
         with self._lock:
-            return self._audio.get((node_id, n))
+            return self._audio.get((track, node_id, n))
 
     def warm_up(self, stt: bool = True, tts: bool = True) -> None:
         """Load the models now (first use otherwise pays ~2 s STT + ~5 s TTS load inside the first turn). Errors are left to first use."""

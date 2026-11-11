@@ -91,7 +91,7 @@ def test_rescope_edit_returns_and_keeps_the_backup_path(data, tmp_path, monkeypa
     reply = {"action": "edit", "reason_class": "broken_env", "changes": "fix the include path", "option": None}
     lc, _, _, ws = setup(data, tmp_path, reply)
     out = lc.rescope(Jobs(), 1, "broken_env", "netlist will not load")
-    assert out["backup"].startswith("builds/0001-set-an-rc-low-pass-corner/rescope-") and out["backup"].endswith("/node/workspace")
+    assert out["backup"].startswith("builds/rfic-default/0001-set-an-rc-low-pass-corner/rescope-") and out["backup"].endswith("/node/workspace")
     assert (data / out["backup"] / "rc.sp").read_text() == "R1 a b 5k\n"  # the learner's pre-reset file
     st = lc.store.session(lc.store.find(1), "rescope", {})
     assert st["backup"] == out["backup"] and st["editing"] is False  # kept after the job ended

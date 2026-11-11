@@ -119,7 +119,7 @@ class Tutor:
         ladder = next((l for l in self._ladders(ref) if l.get("subskill") == subskill), None)
         if ladder is None:
             raise LifecycleError(404, f"no hint ladder for {subskill!r}")
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self._state(ref)
             n = int(st["hints_used"].get(subskill, 0))
             if n >= len(ladder["hints"]):
@@ -197,7 +197,7 @@ class Tutor:
             reply = REDACTED_REPLY
         hint = self._accept_hint(ref, j.get("hint")) if not redacted else None
         now = datetime.now().astimezone().isoformat(timespec="seconds")
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self._state(ref)  # re-read: a hint reveal may have happened meanwhile
             if hint:
                 st["hints_used"][hint["subskill"]] = max(int(st["hints_used"].get(hint["subskill"], 0)), hint["index"] + 1)
@@ -251,7 +251,7 @@ class Tutor:
         if not subs:  # the model named none (or unknown ones): be conservative, every subskill of the node counts as assisted
             subs = list(node_subs)
         now = datetime.now().astimezone().isoformat(timespec="seconds")
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self._state(ref)
             for s in subs:
                 st["reveals"].setdefault(s, now)

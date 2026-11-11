@@ -28,7 +28,7 @@ NEXT_ACTION = {  # "every screen shows one primary next-action button" (§7)
     "debrief": "finish_debrief", "done": "plan_next", "rescoped": "plan_next", "abandoned": "plan_next",
 }
 _NODE_DIR = re.compile(r"^(\d{4,})-")
-_locks: dict[int, threading.RLock] = {}
+_locks: dict[tuple[str, int], threading.RLock] = {}
 _locks_guard = threading.Lock()
 
 
@@ -39,16 +39,17 @@ class LifecycleError(Exception):
         self.message = message
 
 
-def node_lock(node_id: int) -> threading.RLock:
-    """One lock per node: stage moves and event writes of a node never interleave."""
+def node_lock(track: str, node_id: int) -> threading.RLock:
+    """One lock per node (node ids restart per track): stage moves and event writes of a node never interleave."""
     with _locks_guard:
-        return _locks.setdefault(node_id, threading.RLock())
+        return _locks.setdefault((track, node_id), threading.RLock())
 
 
 @dataclass(frozen=True)
 class NodeRef:
     id: int
     path: Path
+    track: str
 
     @property
     def name(self) -> str:
@@ -84,19 +85,23 @@ def autocommit(root: Path, message: str) -> bool:
 
 
 class NodeStore:
-    def __init__(self, data_root: Path):
-        self.layout = DataLayout(data_root)
+    def __init__(self, data_root: Path, track: str):
+        self.track = track
+        self.layout = DataLayout(data_root, track)
 
     @property
     def root(self) -> Path:
         return self.layout.root
+
+    def job_label(self, ref: "NodeRef") -> str:
+        return self.layout.job_label(ref.name)
 
     def find(self, node_id: int) -> NodeRef:
         if self.layout.nodes_dir.is_dir():
             for p in sorted(self.layout.nodes_dir.iterdir()):
                 m = _NODE_DIR.match(p.name)
                 if p.is_dir() and m and int(m.group(1)) == node_id and (p / "node.md").is_file():
-                    ref = NodeRef(node_id, p)
+                    ref = NodeRef(node_id, p, self.track)
                     if self.frontmatter(ref).get("kind") == "diagnostic":
                         raise LifecycleError(409, "the onboarding diagnostic has no lifecycle")
                     return ref
@@ -110,7 +115,7 @@ class NodeStore:
                 if p.is_dir() and m and (p / "node.md").is_file():
                     try:
                         if read_node_md(p / "node.md")[0].get("kind") != "diagnostic":
-                            out.append(NodeRef(int(m.group(1)), p))
+                            out.append(NodeRef(int(m.group(1)), p, self.track))
                     except (NodeFileError, OSError, UnicodeDecodeError):
                         continue
         return out
@@ -138,7 +143,7 @@ class NodeStore:
 
     def transition(self, ref: NodeRef, to: str, commit: bool = True) -> None:
         """Validate and apply one stage move, refresh the cache, auto-commit data/."""
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             cur = self.status(ref)
             if to not in TRANSITIONS.get(cur, set()):
                 raise LifecycleError(409, f"node {ref.id}: cannot move from {cur!r} to {to!r}")

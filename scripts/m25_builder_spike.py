@@ -22,7 +22,7 @@ from app.builder.gate import GateContext, GateResult, run_gate
 from app.llm.adapters.claude_code import ClaudeCodeAdapter, clean_env
 from app.llm.types import Request
 from app.settings import data_dir
-from domains.rfic.container import default_nodes_root
+from domains.rfic.container import default_tracks_root
 from domains.rfic.domain import run_checker
 from domains.rfic.tools_mcp.config import tool_names, write_mcp_config
 
@@ -155,11 +155,11 @@ def sum_usage(attempts: list[Attempt]) -> dict:
     return tot
 
 
-def build_node(key: str, model: str, nodes_root: Path, spike_dir: Path, log) -> dict:
+def build_node(key: str, model: str, tracks_root: Path, spike_dir: Path, log) -> dict:
     spec = SPECS[key]
-    node_dir = nodes_root / spec["dir"]
+    node_dir = tracks_root / spec["dir"]
     node_dir.mkdir(parents=True, exist_ok=True)
-    mcp_path = write_mcp_config(spike_dir / f"{spec['dir']}.mcp.json", nodes_root, spec["dir"], data_dir())
+    mcp_path = write_mcp_config(spike_dir / f"{spec['dir']}.mcp.json", tracks_root, spec["dir"], data_dir())
     created = datetime.now().astimezone().isoformat(timespec="seconds")
     ctx = GateContext.from_dict(spec["context"])
     attempts: list[Attempt] = []
@@ -203,7 +203,7 @@ def main() -> int:
     ap.add_argument("--fallback-model", default=FALLBACK)
     ap.add_argument("--no-fallback", action="store_true")
     a = ap.parse_args()
-    nodes_root = default_nodes_root()
+    tracks_root = default_tracks_root()
     spike_dir = data_dir() / "spike"
     spike_dir.mkdir(parents=True, exist_ok=True)
     out_path = spike_dir / "m25_results.json"
@@ -221,11 +221,11 @@ def main() -> int:
 
     for key in [k.strip() for k in a.only.split(",") if k.strip()]:
         spec = SPECS[key]
-        node_dir = nodes_root / spec["dir"]
+        node_dir = tracks_root / spec["dir"]
         if node_dir.exists() and any(node_dir.iterdir()):
             log(f"[{key}] {node_dir} is not empty; refusing to build over it (move it away first)")
             return 2
-        r = build_node(key, a.model, nodes_root, spike_dir, log)
+        r = build_node(key, a.model, tracks_root, spike_dir, log)
         results["runs"].append(r)
         save()
         if not r["passed"] and not a.no_fallback:
@@ -235,7 +235,7 @@ def main() -> int:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(node_dir), str(dest))
             log(f"[{key}] failed on {a.model}; moved to {dest}; rebuilding once on {a.fallback_model}")
-            r2 = build_node(key, a.fallback_model, nodes_root, spike_dir, log)
+            r2 = build_node(key, a.fallback_model, tracks_root, spike_dir, log)
             r2["fallback_for"] = a.model
             results["runs"].append(r2)
             save()

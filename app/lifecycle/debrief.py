@@ -55,10 +55,10 @@ class Evidence:
     def __init__(self, store: NodeStore, tutor: Tutor):
         self.store = store
         self.tutor = tutor
-        self.ds = DataStore(store.root)
+        self.ds = DataStore(store.root, store.track)
 
     def domain_of(self, ref: NodeRef, subskill: str) -> str:
-        fw = load_framework(self.store.root)
+        fw = load_framework(self.store.root, self.store.track)
         if fw is not None:
             for d in fw.domains:
                 if subskill in d.subskills:
@@ -76,15 +76,15 @@ class Evidence:
              interleaved: bool = False, grader_model: str | None = None) -> Event:  # fmt: skip
         v, w = base_value_weight(type_, score=score, err=err, tol=tol)
         domain = self.domain_of(ref, subskill)
-        ev = new_event(node_id=ref.id, domain=domain, subskill=subskill, tier=self.tier_for(ref, domain), type=type_, value=v, weight=w,
+        ev = new_event(track=ref.track, node_id=ref.id, domain=domain, subskill=subskill, tier=self.tier_for(ref, domain), type=type_, value=v, weight=w,
                        interleaved=interleaved, assist_reveal=subskill in self.tutor.reveals(ref), grader_model=grader_model,
                        framework_version=1)  # fmt: skip
         self.ds.append_event(ev)
         if interleaved and v >= RESOLVE_MIN_VALUE - 1e-9:  # §7.7: an interleaved item scoring >= 2 resolves misconceptions on it
             path = self.store.layout.misconceptions_path
-            for m in fold(read_records(path)):
+            for m in fold(read_records(path, ref.track)):
                 if not m["resolved"] and m["subskill"] == subskill and m["node_id"] != ref.id:
-                    resolve_misconception(path, m["id"], node_id=ref.id, event_id=ev.id)
+                    resolve_misconception(path, m["id"], track=ref.track, node_id=ref.id, event_id=ev.id)
         return ev
 
     def node_events(self, ref: NodeRef) -> list[Event]:
@@ -95,7 +95,7 @@ class Evidence:
         for m in items or []:
             if isinstance(m, dict) and isinstance(m.get("text"), str) and m["text"].strip():
                 sub = m.get("subskill") if isinstance(m.get("subskill"), str) else default_subskill
-                if add_misconception(self.store.layout.misconceptions_path, node_id=ref.id, subskill=sub, text=m["text"]) is not None:
+                if add_misconception(self.store.layout.misconceptions_path, track=ref.track, node_id=ref.id, subskill=sub, text=m["text"]) is not None:
                     n += 1
         return n
 
@@ -124,7 +124,7 @@ class Debrief:
     # --- entering the debrief ------------------------------------------------------------------------------
     def finalize(self, ref: NodeRef) -> None:
         """Numeric prelab events (code), explain grading (heavy, queued if unavailable), debrief.md. Idempotent."""
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self._state(ref)
             if not st["numeric_done"]:
                 self._numeric_events(ref, st)
@@ -167,7 +167,7 @@ class Debrief:
         system = (PROMPTS / "prelab_explain_grader.md").read_text(encoding="utf-8").replace("{domain_pack}", self.domain_pack)
         msgs = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps({"items": items, "answers": answers}, ensure_ascii=False)}]
         try:
-            res = self.router.complete(GRADE_TASK, msgs, schema=GRADE_SCHEMA, node_id=ref.id)  # a failure is queued by the router (§3.1)
+            res = self.router.complete(GRADE_TASK, msgs, schema=GRADE_SCHEMA, node_id=ref.id, track=ref.track)  # a failure is queued by the router (§3.1)
         except LLMError as e:
             g["status"], g["error"] = "pending", str(e)[:300]
             self.store.save_session(ref, "debrief", st)
@@ -178,7 +178,7 @@ class Debrief:
                 g["status"], g["error"] = "pending", err
                 self.store.save_session(ref, "debrief", st)
                 refresh_provisional(self.store, ref)
-                self.router.store.enqueue_grade(GRADE_TASK, asdict(_request(msgs, ref.id)), ref.id, err)
+                self.router.store.enqueue_grade(GRADE_TASK, asdict(_request(msgs, ref.id, ref.track)), ref.id, err, track=ref.track)
         self.store.save_session(ref, "debrief", st)
 
     def _apply_grades(self, ref: NodeRef, st: dict, out, model: str) -> str | None:
@@ -215,13 +215,13 @@ class Debrief:
             ref = self.store.find(int(row["node_id"]))
         except LifecycleError:
             return
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self._state(ref)
             if st["grading"]["status"] != "pending":
                 return  # already applied
             err = self._apply_grades(ref, st, result.json, result.model)
             if err:
-                self.router.store.enqueue_grade(GRADE_TASK, json.loads(row["request"]), ref.id, err)
+                self.router.store.enqueue_grade(GRADE_TASK, json.loads(row["request"]), ref.id, err, track=ref.track)
             else:
                 self.write_md(ref)
                 autocommit(self.store.root, f"node {ref.id}: grades applied")
@@ -233,7 +233,7 @@ class Debrief:
         fm = self.store.frontmatter(ref)
         g = st["grading"]
         cal = st.get("calibration") or []
-        mis = fold(read_records(self.store.layout.misconceptions_path))
+        mis = fold(read_records(self.store.layout.misconceptions_path, ref.track))
         proof = self.store.session(ref, "proof", {"submissions": []})
         subs = proof.get("submissions", [])
         return {
@@ -261,7 +261,7 @@ class Debrief:
 
     def mastery_deltas(self, ref: NodeRef) -> list[dict]:
         """Per domain this node produced evidence in: tier and mastery just before its first event vs after its last."""
-        events, _ = read_events(self.store.layout.events_path)
+        events, _ = read_events(self.store.layout.events_path, ref.track)
         idx = [i for i, e in enumerate(events) if e.node_id == ref.id]
         if not idx:
             return []
@@ -303,8 +303,8 @@ class Debrief:
         (ref.path / "debrief.md").write_text("\n".join(L) + "\n", encoding="utf-8", newline="\n")
 
 
-def _request(messages: list[dict], node_id: int):
+def _request(messages: list[dict], node_id: int, track: str):
     from app.llm.types import Request
 
-    return Request(GRADE_TASK, messages, GRADE_SCHEMA, None, None, node_id, None, light=False)
+    return Request(GRADE_TASK, messages, GRADE_SCHEMA, None, None, node_id, None, light=False, track=track)
 

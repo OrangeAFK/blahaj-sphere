@@ -137,7 +137,7 @@ class OralExam:
     def start(self, ref: NodeRef, mode: str, tts: bool) -> dict:
         if mode not in ("voice", "text"):
             raise LifecycleError(422, "mode must be 'voice' or 'text'")
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             self.store.require(ref, "oral")
             st = self._state(ref)
             if mode == "voice":
@@ -168,7 +168,7 @@ class OralExam:
         if len(text) > MAX_ANSWER_CHARS:
             raise LifecycleError(422, f"answers are limited to {MAX_ANSWER_CHARS} characters")
         timing = {"t0": time.perf_counter(), **(timing or {})}
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             self.store.require(ref, "oral")
             st = self._state(ref)
             if st["status"] != "active":
@@ -199,7 +199,7 @@ class OralExam:
         if st["tts"] and self.voice is not None:
             try:
                 wav, tts_s = self.voice.speaker.synthesize(say)
-                self.voice.put_audio(ref.id, n, wav)
+                self.voice.put_audio(ref.track, ref.id, n, wav)
                 turn["audio"] = True
             except (VoiceUnavailable, OSError, RuntimeError) as e:  # a TTS problem must not stop the exam: the text is shown anyway
                 turn["tts_error"] = str(e)[:200]
@@ -226,7 +226,7 @@ class OralExam:
         }  # fmt: skip
         msgs = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
         try:
-            res = self.router.complete(EXAMINER_TASK, msgs, schema=EXAMINER_SCHEMA, node_id=ref.id)
+            res = self.router.complete(EXAMINER_TASK, msgs, schema=EXAMINER_SCHEMA, node_id=ref.id, track=ref.track)
         except LLMError:
             return None
         return res.json if isinstance(res.json, dict) else None
@@ -313,7 +313,7 @@ class OralExam:
         return build_prompt(node_vocab, dom)
 
     def audio(self, ref: NodeRef, n: int) -> bytes:
-        wav = self.voice.audio(ref.id, n) if self.voice is not None else None
+        wav = self.voice.audio(ref.track, ref.id, n) if self.voice is not None else None
         if wav is None:
             raise LifecycleError(404, "no audio for that turn (it is only kept for the last few questions)")
         return wav
@@ -335,21 +335,21 @@ class OralExam:
 
     def grade(self, ref: NodeRef) -> None:
         """Grade the finished exam (heavy, pinned, frozen prompt). Unavailable -> pending + queued (§3.1). Idempotent."""
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self._state(ref)
             g = st["grading"]
             if g["status"] in ("done", "pending") or st["status"] != "complete":
                 return
             msgs = self._grade_messages(ref, st)
             try:
-                res = self.router.complete(GRADE_TASK, msgs, schema=GRADE_SCHEMA, node_id=ref.id)
+                res = self.router.complete(GRADE_TASK, msgs, schema=GRADE_SCHEMA, node_id=ref.id, track=ref.track)
                 parsed, err = self._parse(ref, st, res.json)
                 if parsed is not None and parsed["unverified"]:  # one repair attempt for quotes that are not verbatim
                     bad = ", ".join(f"{r['id']}: {r['quote'][:80]!r}" for r in parsed["unverified"])
                     fix = [*msgs, {"role": "assistant", "content": res.text},
                            {"role": "user", "content": f"These quotes are not verbatim from the learner's turns ({bad}). Return the same JSON with each quote copied exactly from a learner turn."}]  # fmt: skip
                     try:
-                        res2 = self.router.complete(GRADE_TASK, fix, schema=GRADE_SCHEMA, node_id=ref.id)
+                        res2 = self.router.complete(GRADE_TASK, fix, schema=GRADE_SCHEMA, node_id=ref.id, track=ref.track)
                         p2, e2 = self._parse(ref, st, res2.json)
                         if p2 is not None:
                             res, parsed, err = res2, p2, e2
@@ -362,7 +362,7 @@ class OralExam:
                 return
             if err or parsed is None:  # unusable grader output: queue it like an outage, the retry asks again
                 g["status"], g["error"] = "pending", err or "unusable grader output"
-                self.router.store.enqueue_grade(GRADE_TASK, _req_dict(msgs, ref.id), ref.id, g["error"])
+                self.router.store.enqueue_grade(GRADE_TASK, _req_dict(msgs, ref.id, ref.track), ref.id, g["error"], track=ref.track)
             else:
                 self._apply(ref, st, parsed, res.json, res.model)
             self._save(ref, st)
@@ -410,7 +410,7 @@ class OralExam:
             if (r["interleaved"] and r["score"] == 0 or weak_core) and r["subskill"] not in have:
                 what = "Could not answer" if r["score"] == 0 else "Weak answer on"
                 text = f"{what} an oral question on {r['subskill']}: {r['rationale']}".strip()
-                if add_misconception(self.store.layout.misconceptions_path, node_id=ref.id, subskill=r["subskill"], text=text) is not None:
+                if add_misconception(self.store.layout.misconceptions_path, track=ref.track, node_id=ref.id, subskill=r["subskill"], text=text) is not None:
                     logged += 1
                 have.add(r["subskill"])
         g = st["grading"]
@@ -427,13 +427,13 @@ class OralExam:
             ref = self.store.find(int(row["node_id"]))
         except LifecycleError:
             return
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self._state(ref)
             if st["grading"]["status"] != "pending":
                 return  # already applied
             parsed, err = self._parse(ref, st, result.json)
             if err or parsed is None:
-                self.router.store.enqueue_grade(GRADE_TASK, json.loads(row["request"]), ref.id, err or "unusable grader output")
+                self.router.store.enqueue_grade(GRADE_TASK, json.loads(row["request"]), ref.id, err or "unusable grader output", track=ref.track)
             else:
                 self._apply(ref, st, parsed, result.json, result.model)
                 self.debrief.write_md(ref)
@@ -445,7 +445,7 @@ class OralExam:
     def spawn_remediation(self, ref: NodeRef, st: dict | None = None) -> dict:
         """Planner (kind=remediation) -> a build job for the child node. Idempotent; the result is kept in the oral state."""
         own = st is None
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = st or self._state(ref)
             rem = st.get("remediation")
             if rem and rem.get("status") in ("building", "ready"):
@@ -462,22 +462,22 @@ class OralExam:
 
     def _start_remediation(self, ref: NodeRef, st: dict) -> dict:
         fm = self.store.frontmatter(ref)
-        mine = [m for m in fold(read_records(self.store.layout.misconceptions_path)) if m["node_id"] == ref.id]
+        mine = [m for m in fold(read_records(self.store.layout.misconceptions_path, ref.track)) if m["node_id"] == ref.id]
         ctx = {
             "parent": {"id": ref.id, "title": fm.get("title"), "domain": fm.get("domain"), "subskills": [str(s) for s in fm.get("subskills") or []], "tier": fm.get("tier")},
             "failed_items": [{"subskill": r["subskill"], "score": r["score"], "why": r["rationale"]} for r in st["grading"]["results"] if not r["interleaved"] and r["score"] < 2],
             "misconceptions": [{"text": m["text"], "subskill": m["subskill"]} for m in mine],
         }  # fmt: skip
         try:
-            option = Planner(self.store.root, self.router, self.domain.name).remediation_option(ctx)
-            builder = BuildService(self.store.root, self.router, self.domain)
+            option = Planner(self.store.root, ref.track, self.router, self.domain.name).remediation_option(ctx)
+            builder = BuildService(self.store.root, ref.track, self.router, self.domain)
             parent_id = ref.id
 
             def done(rec: dict) -> None:  # the child is released: link it to its parent
-                new_dir = self.store.root / "archive" / "nodes" / rec["node_dir"]
-                self.store.set_scalar(NodeRef(int(rec["node_dir"].split("-", 1)[0]), new_dir), "parents", [parent_id])
+                new_dir = self.store.layout.nodes_dir / rec["node_dir"]
+                self.store.set_scalar(NodeRef(int(rec["node_dir"].split("-", 1)[0]), new_dir, ref.track), "parents", [parent_id])
                 rebuild_db(self.store.root)
-                with node_lock(parent_id):
+                with node_lock(ref.track, parent_id):
                     p = self.store.find(parent_id)
                     s2 = self._state(p)
                     s2["remediation"] = {**(s2.get("remediation") or {}), "status": "ready"}
@@ -487,7 +487,7 @@ class OralExam:
             job, plan = builder.start(self.jobs, option, on_success=done)
         except (PlannerError, BuildError, LLMError) as e:
             return {"status": "failed", "error": str(getattr(e, "message", e))[:300]}
-        append_jsonl(self.store.root / "remediation.jsonl", {"ts": _now(), "node_id": ref.id, "decision": "oral_fail", "child": plan.name})
+        append_jsonl(self.store.layout.remediation_path, {"ts": _now(), "node_id": ref.id, "decision": "oral_fail", "child": plan.name})
         return {"status": "building", "job_id": job.id, "child_id": plan.node_id, "node_dir": plan.name, "title": option["title"], "option": option}
 
     def _refresh_remediation(self, ref: NodeRef, st: dict) -> None:
@@ -502,7 +502,7 @@ class OralExam:
             self._save(ref, st)
 
     def retry_remediation(self, ref: NodeRef) -> dict:
-        with node_lock(ref.id):
+        with node_lock(ref.track, ref.id):
             st = self._state(ref)
             if (st.get("remediation") or {}).get("status") not in ("failed", "needed"):
                 raise LifecycleError(409, "there is no failed remediation to retry")
@@ -535,7 +535,7 @@ class OralExam:
         return "done-with-remediation" if (st.get("remediation") or {}).get("status") in ("building", "ready", "needed", "failed") else None
 
 
-def _req_dict(messages: list[dict], node_id: int) -> dict:
+def _req_dict(messages: list[dict], node_id: int, track: str) -> dict:
     from dataclasses import asdict
 
-    return asdict(Request(GRADE_TASK, messages, GRADE_SCHEMA, None, None, node_id, None, light=False))
+    return asdict(Request(GRADE_TASK, messages, GRADE_SCHEMA, None, None, node_id, None, light=False, track=track))

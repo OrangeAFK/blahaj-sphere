@@ -11,6 +11,10 @@ export type FrameworkView = components['schemas']['FrameworkView']
 export type DiagnosticView = components['schemas']['DiagnosticView']
 export type AnswerResult = components['schemas']['AnswerResult']
 
+export type TracksView = components['schemas']['TracksView']
+export type TrackView = components['schemas']['TrackView']
+export type TrashView = components['schemas']['TrashView']
+
 export type NodeSummary = components['schemas']['NodeSummary']
 export type NodeView = components['schemas']['NodeView']
 export type CheckerView = components['schemas']['CheckerView']
@@ -94,8 +98,20 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T>(path: string, body?: unknown) =>
   req<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
 
+const send = <T>(method: 'DELETE' | 'PATCH', path: string, body: unknown) => req<T>(path, { method, body: JSON.stringify(body) })
+
 export const api = {
   health: () => req<components['schemas']['Health']>('/health'),
+  tracks: () => req<TracksView>('/tracks'),
+  createTrack: (name: string, domain: string) => post<TracksView>('/tracks', { name, domain }),
+  activateTrack: (id: string) => post<TracksView>(`/tracks/${encodeURIComponent(id)}/activate`),
+  renameTrack: (id: string, name: string) => send<TracksView>('PATCH', `/tracks/${encodeURIComponent(id)}`, { name }),
+  archiveTrack: (id: string) => post<TracksView>(`/tracks/${encodeURIComponent(id)}/archive`),
+  unarchiveTrack: (id: string) => post<TracksView>(`/tracks/${encodeURIComponent(id)}/unarchive`),
+  resetTrack: (id: string, keep_goals: boolean) => post<TracksView>(`/tracks/${encodeURIComponent(id)}/reset`, { keep_goals }),
+  deleteTrack: (id: string, confirm_name: string) => send<TracksView>('DELETE', `/tracks/${encodeURIComponent(id)}`, { confirm_name }),
+  restoreTrack: (entry: string) => post<TracksView>(`/tracks/trash/${encodeURIComponent(entry)}/restore`),
+  purgeTrash: (confirm: string) => send<{ purged: string[] }>('DELETE', '/tracks/trash', { confirm }),
   getSettings: () => req<Settings>('/settings'),
   putSettings: (s: Settings) => req<Settings>('/settings', { method: 'PUT', body: JSON.stringify(s) }),
   getPreflight: () => req<Check[]>('/preflight'),

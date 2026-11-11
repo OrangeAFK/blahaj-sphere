@@ -19,11 +19,11 @@ SKIP = (".git", "builds", "_spike_archive", "spike", "library", "models", "*.db-
 
 
 @contextlib.contextmanager
-def temp_data():
+def temp_data(skip: tuple[str, ...] = SKIP):
     src = data_dir()
     tmp = Path(tempfile.mkdtemp(prefix="blahaj-data-"))
     root = tmp / "data"
-    shutil.copytree(src, root, ignore=shutil.ignore_patterns(*SKIP))
+    shutil.copytree(src, root, ignore=shutil.ignore_patterns(*skip))
     old = os.environ.get("BLAHAJ_DATA_DIR")
     os.environ["BLAHAJ_DATA_DIR"] = str(root)
     try:

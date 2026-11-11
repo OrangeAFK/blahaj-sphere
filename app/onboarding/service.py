@@ -86,17 +86,18 @@ def render_goals(goals: dict) -> str:
 
 
 class Onboarding:
-    def __init__(self, data_root: Path, router, domain_pack: str, template_path: Path | None):
-        self.layout = DataLayout(data_root)
+    def __init__(self, data_root: Path, track: str, router, domain_pack: str, template_path: Path | None):
+        self.track = track
+        self.layout = DataLayout(data_root, track)
         self.router = router
         self.domain_pack = domain_pack
         self.template_path = template_path
-        self.frameworks = FrameworkStore(self.layout.root / "framework")
+        self.frameworks = FrameworkStore(self.layout.framework_dir)
 
     # --- paths -----------------------------------------------------------------------------------
     @property
     def profile(self) -> Path:
-        return self.layout.root / "profile"
+        return self.layout.profile_dir
 
     @property
     def goals_path(self) -> Path:
@@ -335,7 +336,7 @@ class Onboarding:
         quote_ok = quote == "" or quote in answer
         v, w = base_value_weight("diagnostic_item", score=score)
         ev = new_event(
-            node_id=DIAG_NODE_ID, domain=p["domain"], subskill=p["subskill"], tier=p["tier"], type="diagnostic_item",
+            track=self.track, node_id=DIAG_NODE_ID, domain=p["domain"], subskill=p["subskill"], tier=p["tier"], type="diagnostic_item",
             value=v, weight=w, grader_model=res.model, framework_version=1,
         )
         append_event(self.layout.events_path, ev)
@@ -367,7 +368,7 @@ class Onboarding:
         return s["tiers"]
 
     def _finalize(self, s: dict, fw: Framework) -> None:
-        events, _ = read_events(self.layout.events_path)
+        events, _ = read_events(self.layout.events_path, self.track)
         diag = [e for e in events if e.type == "diagnostic_item"]
         s["tiers"] = {d.id: initial_tier([e for e in diag if e.domain == d.id]) for d in fw.domains}
         s["done"] = True
@@ -400,4 +401,4 @@ class Onboarding:
     # --- shared ----------------------------------------------------------------------------------
     def _complete(self, task: str, messages: list[dict], schema: dict):
         node_id = DIAG_NODE_ID if task in ("diagnostic_dialogue", "grade_diagnostic") else None
-        return self.router.complete(task, messages, schema=schema, node_id=node_id)
+        return self.router.complete(task, messages, schema=schema, node_id=node_id, track=self.track)

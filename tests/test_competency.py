@@ -20,7 +20,7 @@ _n = 0
 def ev(type="oral_item", v=1.0, w=1.0, *, domain="matching", sub="matching.l_network", tier=1, node=1, **kw) -> Event:
     global _n
     _n += 1
-    return Event(id=f"e{_n}", ts="2026-11-10T00:00:00-06:00", node_id=node, domain=domain, subskill=sub, tier=tier, type=type, value=v, weight=w, **kw)
+    return Event(id=f"e{_n}", ts="2026-11-10T00:00:00-06:00", track="t", node_id=node, domain=domain, subskill=sub, tier=tier, type=type, value=v, weight=w, **kw)
 
 
 # --- §8.2: every row --------------------------------------------------------------------------
@@ -160,7 +160,7 @@ def test_no_unlock_below_65():
 
 def test_unlock_has_no_time_condition():
     old = "1999-01-01T00:00:00+00:00"
-    evs = [Event(f"x{i}", old, 1, "matching", f"matching.s{i % 3}", 1, "oral_item", 0.8, 1.0) for i in range(13)]
+    evs = [Event(f"x{i}", old, "t", 1, "matching", f"matching.s{i % 3}", 1, "oral_item", 0.8, 1.0) for i in range(13)]
     assert score_domain(evs, "matching").unlocked
 
 

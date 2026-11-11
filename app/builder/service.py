@@ -89,17 +89,18 @@ def prelab_fingerprint(node_dir: Path) -> str:
 
 
 class BuildService:
-    def __init__(self, data_root: Path, router, domain: Domain, max_retries: int = MAX_RETRIES):
+    def __init__(self, data_root: Path, track: str, router, domain: Domain, max_retries: int = MAX_RETRIES):
         if domain.builder is None or domain.run_checker is None:
             raise BuildError(501, f"domain {domain.name} has no Builder")
-        self.layout = DataLayout(data_root)
+        self.track = track
+        self.layout = DataLayout(data_root, track)
         self.router = router
         self.domain = domain
         self.max_retries = max_retries
 
     @property
     def builds_dir(self) -> Path:
-        return self.layout.root / "builds"
+        return self.layout.builds_dir
 
     def record_path(self, node_dir_name_: str, file: str = "record.json") -> Path:
         return self.builds_dir / node_dir_name_ / file
@@ -120,7 +121,7 @@ class BuildService:
             d = self.layout.node_dir(nid, slugify(option["title"]))
             d.mkdir(parents=True)
             (self.builds_dir / d.name).mkdir(parents=True, exist_ok=True)
-        ctx = interleaving_context(self.layout.root, option)
+        ctx = interleaving_context(self.layout.root, self.track, option)
         return BuildPlan(nid, d, option, ctx, datetime.now().astimezone().isoformat(timespec="seconds"))
 
     def start(self, jobs, option: dict, on_success=None):
@@ -133,7 +134,7 @@ class BuildService:
                 on_success(rec)
             return rec
 
-        job = jobs.submit(TASK, job_fn, node_id=plan.name)
+        job = jobs.submit(TASK, job_fn, node_id=self.layout.job_label(plan.name))
         return job, plan
 
     # --- rescope edit (SPEC §7.3) -----------------------------------------------------------------------
@@ -172,11 +173,11 @@ class BuildService:
                 if on_done is not None:
                     on_done()
 
-        return jobs.submit("rescope_edit", job_fn, node_id=plan.name), plan, spec
+        return jobs.submit("rescope_edit", job_fn, node_id=self.layout.job_label(plan.name)), plan, spec
 
     # --- the build -----------------------------------------------------------------------------------
     def prompt(self, plan: BuildPlan, gate_errors: list[str] | None, edit: EditSpec | None = None) -> str:
-        learner = learner_state(self.layout.root)
+        learner = learner_state(self.layout.root, self.track)
         inp = {
             "option": plan.option,
             "node": {"id": plan.node_id, "dir": plan.name, "slug": plan.name.split("-", 1)[1], "created": plan.created},
@@ -251,6 +252,7 @@ class BuildService:
             self._abort_if_env_down(plan, record, log, "after the agent of attempt %d" % n, edit)
             record["attempts"].pop()
             t1 = time.monotonic()
+            self._stamp_track(plan)
             try:
                 res = run_gate(plan.node_dir, self.domain.run_checker, plan.ctx)
             except Exception as e:  # noqa: BLE001 - a gate crash is a failed attempt, not a dead job
@@ -355,6 +357,15 @@ class BuildService:
         log(f"toolchain unavailable {when}: {bad}")
         self._reject(plan, record, edit)
         raise BuildError(503, f"toolchain unavailable {when}, build aborted (fix it and build again): " + "; ".join(bad))
+
+    def _stamp_track(self, plan: BuildPlan) -> None:
+        """node.md carries `track` (SPEC §5.1); code sets it, the Builder never has to know it."""
+        md = plan.node_dir / "node.md"
+        try:
+            if md.is_file() and read_node_md(md)[0].get("track") != self.track:
+                set_frontmatter_scalar(md, "track", self.track)
+        except (NodeFileError, OSError):
+            pass  # a malformed node.md is reported by gate 0
 
     def abandon(self, node_dir: str) -> None:
         """Mark a released node `abandoned` (SPEC §5.1 status), e.g. when it is rebuilt under stricter rules. Never deleted."""

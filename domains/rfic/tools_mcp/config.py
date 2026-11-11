@@ -14,8 +14,8 @@ def tool_names() -> list[str]:
     return [f"mcp__{SERVER_KEY}__{t['name']}" for t in TOOL_SPECS]
 
 
-def mcp_config(nodes_root: Path, node: str | None, data_dir: Path | None = None, call_log: Path | None = None) -> dict:
-    args = ["-X", "utf8", "-m", "domains.rfic.tools_mcp", "--nodes-root", str(nodes_root)]
+def mcp_config(tracks_root: Path, node: str | None, data_dir: Path | None = None, call_log: Path | None = None) -> dict:
+    args = ["-X", "utf8", "-m", "domains.rfic.tools_mcp", "--tracks-root", str(tracks_root)]
     if node:
         args += ["--node", node]
     if data_dir:
@@ -29,7 +29,7 @@ def mcp_config(nodes_root: Path, node: str | None, data_dir: Path | None = None,
     }
 
 
-def write_mcp_config(path: Path, nodes_root: Path, node: str | None, data_dir: Path | None = None, call_log: Path | None = None) -> Path:
+def write_mcp_config(path: Path, tracks_root: Path, node: str | None, data_dir: Path | None = None, call_log: Path | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(mcp_config(nodes_root, node, data_dir, call_log), indent=2), encoding="utf-8")
+    path.write_text(json.dumps(mcp_config(tracks_root, node, data_dir, call_log), indent=2), encoding="utf-8")
     return path

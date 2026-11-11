@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from app.jobs.deps import get_running_manager
 from app.jobs.manager import JobManager
 from app.jobs.store import Job, JobHandle
-from domains.rfic.container import ContainerError, ContainerManager, default_nodes_root
+from domains.rfic.container import ContainerError, ContainerManager, default_tracks_root
 from domains.rfic.tools_mcp.tools import TOOL_ERRORS, RficTools
 
 DOCKERFILE = Path(__file__).resolve().parent / "docker" / "Dockerfile"
@@ -19,8 +19,18 @@ router = APIRouter(prefix="/rfic")
 
 def containers_for(app) -> ContainerManager:
     if not hasattr(app.state, "rfic_containers"):
-        app.state.rfic_containers = ContainerManager(default_nodes_root())
+        app.state.rfic_containers = ContainerManager(default_tracks_root())
     return app.state.rfic_containers
+
+
+def node_token(node: str | None) -> str | None:
+    """The UI names a node by its directory in the ACTIVE track; the container names it `<track>/archive/nodes/<dir>`.
+    A value that already contains a `/` is taken as a token as it is (it is validated by the path sandbox)."""
+    if not node or "/" in node:
+        return node
+    from app.tracks.scope import current_scope
+
+    return f"{current_scope().track}/archive/nodes/{node}"
 
 
 def get_containers(request: Request) -> ContainerManager:
@@ -36,7 +46,7 @@ class ContainerStatus(BaseModel):
     image_present: bool
     container: str
     running: bool
-    nodes_root: str
+    tracks_root: str
     gui_port: int
     jupyter_port: int
 
@@ -93,14 +103,15 @@ def container_stop(c: Containers) -> dict:
 @router.post("/gui", response_model=UrlResponse, operation_id="launchRficGui")
 def launch_gui(body: GuiRequest, c: Containers) -> UrlResponse:
     """Start a GUI tool on the container's VNC display and open noVNC in the system browser."""
-    file = f"{body.node}/{body.file}" if body.node and body.file else body.file
-    url = _guard(lambda: c.launch_gui(body.tool, node=body.node, file=file, pdk=body.pdk, open_browser=body.open_browser))
+    node = node_token(body.node)
+    file = f"{node}/{body.file}" if node and body.file else body.file
+    url = _guard(lambda: c.launch_gui(body.tool, node=node, file=file, pdk=body.pdk, open_browser=body.open_browser))
     return UrlResponse(url=url)
 
 
 @router.post("/jupyter", response_model=UrlResponse, operation_id="launchRficJupyter")
 def launch_jupyter(body: JupyterRequest, c: Containers) -> UrlResponse:
-    return UrlResponse(url=_guard(lambda: c.launch_jupyter(body.node, open_browser=body.open_browser)))
+    return UrlResponse(url=_guard(lambda: c.launch_jupyter(node_token(body.node) or '', open_browser=body.open_browser)))
 
 
 def start_image_build(containers: ContainerManager, jobs: JobManager) -> Job:
@@ -119,7 +130,8 @@ def build_image(c: Containers, jobs: Jobs) -> Job:
 @router.post("/run", response_model=Job, operation_id="runRficSim")
 def run_sim(body: RunRequest, c: Containers, jobs: Jobs) -> Job:
     """Run a sim as a job (streams to /api/jobs/stream). Path rules as for the MCP tools, pinned to `node`."""
-    tools = RficTools(c, node=body.node)
+    node = node_token(body.node)
+    tools = RficTools(c, node=node)
     method, kwargs = {
         "ngspice": (tools.run_ngspice, {"netlist": body.path, "pdk": body.pdk}),
         "openems": (tools.run_openems, {"script": body.path}),
@@ -132,4 +144,4 @@ def run_sim(body: RunRequest, c: Containers, jobs: Jobs) -> Job:
         if not result["ok"]:
             raise RuntimeError(f"{body.tool} failed (exit {result['exit_code']})")
 
-    return jobs.submit(f"sim.{body.tool}", run, node_id=body.node)
+    return jobs.submit(f"sim.{body.tool}", run, node_id=c.job_label(node) if node else None)

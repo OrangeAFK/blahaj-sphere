@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.builder.context import learner_state, load_framework
+from app.datastore.layout import DataLayout
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 MIN_OPTIONS, MAX_OPTIONS = 2, 4
@@ -86,24 +87,26 @@ def validate_options(raw, framework, scores: dict[str, dict]) -> tuple[list[dict
 
 
 class Planner:
-    def __init__(self, data_root: Path, router, domain_pack: str):
+    def __init__(self, data_root: Path, track: str, router, domain_pack: str):
         self.root = Path(data_root)
+        self.track = track
+        self.layout = DataLayout(self.root, track)
         self.router = router
         self.domain_pack = domain_pack
 
     @property
     def options_path(self) -> Path:
-        return self.root / "planner" / "options.json"
+        return self.layout.planner_dir / "options.json"
 
     def last_options(self) -> dict | None:
         p = self.options_path
         return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
 
     def planner_input(self) -> dict:
-        fw = load_framework(self.root)
+        fw = load_framework(self.root, self.track)
         if fw is None:
             raise PlannerError(409, "approve the competency framework first (onboarding)")
-        state = learner_state(self.root)
+        state = learner_state(self.root, self.track)
         if not state["scores"]:
             raise PlannerError(409, "finish the onboarding diagnostic first (no tiers yet)")
         n_challenges = sum(1 for n in state["recent_nodes"] if n["kind"] == "challenge")
@@ -123,7 +126,7 @@ class Planner:
 
     def generate(self) -> dict:
         """Call the Planner, validate, keep one repair attempt; store and return {options, model, ts}."""
-        fw = load_framework(self.root)
+        fw = load_framework(self.root, self.track)
         inp = self.planner_input()
         system = {"role": "system", "content": (PROMPTS / "planner.md").read_text(encoding="utf-8").replace("{domain_pack}", self.domain_pack)}
         user = {"role": "user", "content": json.dumps(inp, ensure_ascii=False)}
@@ -143,7 +146,7 @@ class Planner:
     def remediation_option(self, remediation: dict) -> dict:
         """One kind=remediation option for a failed oral (SPEC §7.6): `remediation` = {parent, failed_items, misconceptions}.
         Same validation as options, one repair attempt; not stored (the caller keeps it with the failing node)."""
-        fw = load_framework(self.root)
+        fw = load_framework(self.root, self.track)
         inp = {**self.planner_input(), "remediation": remediation}
         system = {"role": "system", "content": (PROMPTS / "planner.md").read_text(encoding="utf-8").replace("{domain_pack}", self.domain_pack)}
         user = {"role": "user", "content": json.dumps(inp, ensure_ascii=False)}

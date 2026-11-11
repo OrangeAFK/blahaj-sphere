@@ -8,6 +8,8 @@ from pathlib import Path
 
 from app.competency.engine import EVENT_TYPES, MAX_TIER, MIN_TIER, Event
 
+from .lock import log_lock
+
 
 class EventError(ValueError):
     pass
@@ -16,6 +18,8 @@ class EventError(ValueError):
 def validate(ev: Event) -> None:
     if ev.type not in EVENT_TYPES:
         raise EventError(f"unknown event type {ev.type!r}")
+    if not isinstance(ev.track, str) or not ev.track:
+        raise EventError("track is required")
     if not isinstance(ev.node_id, int) or isinstance(ev.node_id, bool):
         raise EventError("node_id must be an int")
     if not ev.domain or not ev.subskill:
@@ -42,7 +46,7 @@ def append_event(path: Path, ev: Event) -> None:
     validate(ev)
     line = json.dumps(ev.to_dict(), ensure_ascii=False, separators=(",", ":")) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "ab+") as f:
+    with log_lock, open(path, "ab+") as f:
         if f.seek(0, os.SEEK_END) > 0:
             f.seek(-1, os.SEEK_END)
             if f.read(1) != b"\n":
@@ -52,8 +56,9 @@ def append_event(path: Path, ev: Event) -> None:
         os.fsync(f.fileno())
 
 
-def read_events(path: Path) -> tuple[list[Event], list[tuple[int, str]]]:
-    """-> (events in file order, [(1-based line number, reason)] for lines that were skipped)."""
+def read_events(path: Path, track: str | None = None) -> tuple[list[Event], list[tuple[int, str]]]:
+    """-> (events in file order, [(1-based line number, reason)] for lines that were skipped).
+    `track` keeps only that track's events (order preserved); None = every track."""
     events: list[Event] = []
     bad: list[tuple[int, str]] = []
     if not path.exists():
@@ -68,5 +73,6 @@ def read_events(path: Path) -> tuple[list[Event], list[tuple[int, str]]]:
             except (json.JSONDecodeError, TypeError, EventError) as e:
                 bad.append((n, str(e)))
                 continue
-            events.append(ev)
+            if track is None or ev.track == track:
+                events.append(ev)
     return events, bad

@@ -32,6 +32,7 @@ class Request:
     node_id: int | None = None
     mcp_config: str | None = None
     light: bool = False  # light-tier task: claude_code runs with a replaced system prompt, no tools, no MCP
+    track: str | None = None  # learning track the call belongs to (a queued grading retry is applied there, SPEC §8.6)
 
 
 @dataclass

@@ -13,35 +13,40 @@ from app.competency.engine import score_all
 from app.datastore.cache import DataStore, connect, rebuild_db, snapshot
 from app.datastore.events import EventError, append_event, new_event, read_events
 from app.datastore.layout import DataLayout, commit_all, init_repo
+from tests.helpers import TRACK as T, make_data
 
 FIXTURES = Path(__file__).parent / "fixtures" / "spike_nodes"
 
 
 def mk(i=0, **kw):
-    base = dict(node_id=1, domain="matching", subskill=f"matching.s{i % 3}", tier=1, type="oral_item", value=0.8, weight=1.0)
+    base = dict(track=T, node_id=1, domain="matching", subskill=f"matching.s{i % 3}", tier=1, type="oral_item", value=0.8, weight=1.0)
     return new_event(**{**base, **kw})
 
 
 @pytest.fixture
 def data(tmp_path):
-    root = tmp_path / "data"
-    shutil.copytree(FIXTURES, root / "archive" / "nodes")
-    DataLayout(root).ensure()
+    root = make_data(tmp_path / "data")
+    shutil.rmtree(DataLayout(root, T).nodes_dir)
+    shutil.copytree(FIXTURES, DataLayout(root, T).nodes_dir)
     return root
 
 
 def test_layout(tmp_path):
     root = tmp_path / "data"
-    DataLayout(root).ensure()
-    for p in ("profile", "framework", "archive/nodes", "library", "events.jsonl", ".gitignore"):
+    DataLayout(root, T).ensure()
+    for p in ("tracks/rfic-default/profile", "tracks/rfic-default/framework", "tracks/rfic-default/archive/nodes", "library", "events.jsonl", "misconceptions.jsonl", ".gitignore"):
         assert (root / p).exists(), p
     ignore = (root / ".gitignore").read_text()
-    assert "settings.json" in ignore and "*.raw" in ignore and "__pycache__/" in ignore
+    assert "settings.json" in ignore and "*.raw" in ignore and "__pycache__/" in ignore and "_trash/" in ignore
+    with pytest.raises(Exception, match="track-scoped"):
+        DataLayout(root).nodes_dir  # noqa: B018 - a layout without a track cannot name track paths
     (root / "events.jsonl").write_text("keep\n")
     (root / ".gitignore").write_text("mine\n")
     DataLayout(root).ensure()  # idempotent, never overwrites
     assert (root / "events.jsonl").read_text() == "keep\n" and (root / ".gitignore").read_text() == "mine\n"
-    assert DataLayout(root).node_dir(7, "l-match-60ghz").name == "0007-l-match-60ghz"
+    assert DataLayout(root, T).node_dir(7, "l-match-60ghz").name == "0007-l-match-60ghz"
+    assert DataLayout(root, T).node_dir(7, "x").parent == root / "tracks" / T / "archive" / "nodes"
+    assert DataLayout(root, T).builds_dir == root / "builds" / T and DataLayout(root, T).job_label("0007-x") == f"{T}/0007-x"
 
 
 def test_data_repo_commit(tmp_path):
@@ -93,19 +98,20 @@ def test_validation_rejects_bad_events():
 
 
 def test_rebuild_handles_spike_nodes(data):
-    (data / "archive" / "nodes" / "ems_sample" / "workspace").mkdir(parents=True)  # no node.md
-    bad = data / "archive" / "nodes" / "9999-broken"
+    nodes = DataLayout(data, T).nodes_dir
+    (nodes / "ems_sample" / "workspace").mkdir(parents=True)  # no node.md
+    bad = nodes / "9999-broken"
     bad.mkdir()
     (bad / "node.md").write_text("no frontmatter here")
-    dup = data / "archive" / "nodes" / "0902-zcopy"
-    shutil.copytree(data / "archive" / "nodes" / "0902-ihp-hbt-ce-gain", dup)
+    dup = nodes / "0902-zcopy"
+    shutil.copytree(nodes / "0902-ihp-hbt-ce-gain", dup)
     r = rebuild_db(data)
-    assert r.nodes == 3 and r.skipped_dirs == ["ems_sample"] and set(r.node_issues) == {"9999-broken", "0902-zcopy"}
+    assert r.nodes == 3 and r.skipped_dirs == [f"{T}/ems_sample"] and set(r.node_issues) == {f"{T}/9999-broken", f"{T}/0902-zcopy"}
     with closing(connect(DataLayout(data).cache_path)) as conn:
-        rows = {r["id"]: r for r in conn.execute("SELECT * FROM nodes")}
+        rows = {r["id"]: r for r in conn.execute("SELECT * FROM nodes WHERE track = ?", (T,))}
         assert set(rows) == {901, 902, 903} and rows[901]["domain"] == "matching" and rows[901]["pdk"] == "sky130"
         assert json.loads(rows[901]["subskills"]) == ["matching.l_network", "smith_chart.navigation"]
-        subs = {r["name"]: r for r in conn.execute("SELECT * FROM subskills")}
+        subs = {r["name"]: r for r in conn.execute("SELECT * FROM subskills WHERE track = ?", (T,))}
         assert subs["matching.l_network"]["n_nodes"] >= 1 and subs["smith_chart.navigation"]["domain"] == "matching"
 
 
@@ -126,7 +132,7 @@ def _seed(store):
 
 
 def test_scores_match_pure_engine(data):
-    store = DataStore(data)
+    store = DataStore(data, T)
     store.ensure()
     _seed(store)
     expected = score_all(store.events())
@@ -138,10 +144,10 @@ def test_scores_match_pure_engine(data):
 
 
 def test_rebuild_reproduces_identical_scores(data):
-    store = DataStore(data)
+    store = DataStore(data, T)
     store.ensure()
     _seed(store)
-    cache = DataStore(data).layout.cache_path
+    cache = DataStore(data, T).layout.cache_path
     live = snapshot(cache)
     assert live["scores"] and live["tiers"]
     cache.unlink()
@@ -153,18 +159,19 @@ def test_rebuild_reproduces_identical_scores(data):
 
 def test_rebuild_from_events_file_alone_matches(data, tmp_path):
     """Node files + events.jsonl are all a rebuild needs: copy just those to a new dir."""
-    store = DataStore(data)
+    store = DataStore(data, T)
     store.ensure()
     _seed(store)
     other = tmp_path / "other"
-    shutil.copytree(data / "archive", other / "archive")
+    shutil.copytree(data / "tracks", other / "tracks")
     shutil.copy(data / "events.jsonl", other / "events.jsonl")
+    shutil.copy(data / "tracks.yaml", other / "tracks.yaml")
     rebuild_db(other)
     assert snapshot(DataLayout(other).cache_path) == snapshot(DataLayout(data).cache_path)
 
 
 def test_cache_is_disposable(data):
-    store = DataStore(data)
+    store = DataStore(data, T)
     store.ensure()
     _seed(store)
     layout = DataLayout(data)

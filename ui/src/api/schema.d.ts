@@ -882,11 +882,179 @@ export interface paths {
         };
         /**
          * Get Scores
-         * @description Per-domain tier and mastery from events.jsonl (the cache's scores table).
+         * @description Per-domain tier and mastery of the ACTIVE track, from events.jsonl (the cache's scores table).
          */
         get: operations["getScores"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tracks */
+        get: operations["listTracks"];
+        put?: never;
+        /**
+         * Create Track
+         * @description Create a track and make it the active one; onboarding (§9) then runs for it.
+         */
+        post: operations["createTrack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracks/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Trash */
+        get: operations["listTrash"];
+        put?: never;
+        post?: never;
+        /**
+         * Purge Trash
+         * @description Permanently delete everything in the trash. Needs {"confirm": "PURGE"}.
+         */
+        delete: operations["purgeTrash"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracks/trash/{entry}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Track */
+        post: operations["restoreTrack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracks/trash/{entry}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Purge Trash Entry */
+        delete: operations["purgeTrashEntry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracks/{track_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Track */
+        post: operations["activateTrack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracks/{track_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Track
+         * @description Typed-name confirmation; the track goes to the trash and can be restored until the trash is purged.
+         */
+        delete: operations["deleteTrack"];
+        options?: never;
+        head?: never;
+        /** Rename Track */
+        patch: operations["renameTrack"];
+        trace?: never;
+    };
+    "/api/tracks/{track_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Track */
+        post: operations["archiveTrack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracks/{track_id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unarchive Track */
+        post: operations["unarchiveTrack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tracks/{track_id}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Track
+         * @description Move the track's nodes, events and misconceptions to the trash (goals kept unless keep_goals=false); onboarding re-runs.
+         */
+        post: operations["resetTrack"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1132,12 +1300,36 @@ export interface components {
             container: string;
             /** Running */
             running: boolean;
-            /** Nodes Root */
-            nodes_root: string;
+            /** Tracks Root */
+            tracks_root: string;
             /** Gui Port */
             gui_port: number;
             /** Jupyter Port */
             jupyter_port: number;
+        };
+        /** CreateBody */
+        CreateBody: {
+            /** Name */
+            name: string;
+            /**
+             * Domain
+             * @default rfic
+             */
+            domain: string;
+        };
+        /** CurrentNode */
+        CurrentNode: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string | null;
+            /** Status */
+            status: string | null;
+        };
+        /** DeleteBody */
+        DeleteBody: {
+            /** Confirm Name */
+            confirm_name: string;
         };
         /** DiagnosticDomain */
         DiagnosticDomain: {
@@ -1498,10 +1690,25 @@ export interface components {
             /** Question */
             question: string;
         };
+        /** PurgeBody */
+        PurgeBody: {
+            /** Confirm */
+            confirm: string;
+        };
+        /** PurgeResult */
+        PurgeResult: {
+            /** Purged */
+            purged: string[];
+        };
         /** RemediationBody */
         RemediationBody: {
             /** Accept */
             accept: boolean;
+        };
+        /** RenameBody */
+        RenameBody: {
+            /** Name */
+            name: string;
         };
         /** RescopeBody */
         RescopeBody: {
@@ -1524,6 +1731,14 @@ export interface components {
             node_id: number;
             /** Backup */
             backup?: string | null;
+        };
+        /** ResetBody */
+        ResetBody: {
+            /**
+             * Keep Goals
+             * @default true
+             */
+            keep_goals: boolean;
         };
         /** RunRequest */
         RunRequest: {
@@ -1574,6 +1789,70 @@ export interface components {
             assist_reveal: boolean;
             /** Model */
             model?: string | null;
+        };
+        /** TrackView */
+        TrackView: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Domain */
+            domain: string;
+            /** Status */
+            status: string;
+            /** Active */
+            active: boolean;
+            /** Created */
+            created: string;
+            /** Updated */
+            updated: string;
+            /** Stage */
+            stage: string;
+            /** Nodes */
+            nodes: number;
+            current_node: components["schemas"]["CurrentNode"] | null;
+            /** Tiers */
+            tiers: {
+                [key: string]: number;
+            };
+            /** Mastery */
+            mastery: {
+                [key: string]: number;
+            };
+            /** Last Activity */
+            last_activity: string | null;
+        };
+        /** TracksView */
+        TracksView: {
+            /** Active */
+            active: string;
+            /** Tracks */
+            tracks: components["schemas"]["TrackView"][];
+            /** Trash */
+            trash: components["schemas"]["TrashView"][];
+            /** Domains */
+            domains: string[];
+        };
+        /** TrashView */
+        TrashView: {
+            /** Entry */
+            entry: string;
+            /** Track Id */
+            track_id: string;
+            /** Name */
+            name: string;
+            /** Domain */
+            domain: string;
+            /** Kind */
+            kind: string;
+            /** Trashed At */
+            trashed_at: string;
+            /** Events */
+            events: number;
+            /** Misconceptions */
+            misconceptions: number;
+            /** Restorable */
+            restorable: boolean;
         };
         /** TutorBody */
         TutorBody: {
@@ -3189,6 +3468,376 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DomainScoreView"][];
+                };
+            };
+        };
+    };
+    listTracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+        };
+    };
+    createTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listTrash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrashView"][];
+                };
+            };
+        };
+    };
+    purgeTrash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurgeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurgeResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restoreTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purgeTrashEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurgeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurgeResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activateTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleteTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    renameTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archiveTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unarchiveTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resetTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

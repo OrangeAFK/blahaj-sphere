@@ -212,14 +212,14 @@ function Diagnostic({ onDone }: { onDone: () => void }) {
 }
 
 /** The three onboarding steps (SPEC §9), shown for the stage the backend reports. */
-export function Onboarding() {
+export function Onboarding({ track }: { track?: string }) {
   const [st, setSt] = useState<OnboardingState | null>(null)
   const refresh = useCallback(() => { api.onboardingState().then(setSt).catch(() => {}) }, [])
   useEffect(refresh, [refresh])
   if (!st) return null
   return (
     <section aria-label="Onboarding" className="mt-6">
-      <h2 className="text-lg font-semibold">Onboarding</h2>
+      <h2 className="text-lg font-semibold">Onboarding{track ? <span className="ml-2 text-sm font-normal text-gray-500">track: {track}</span> : null}</h2>
       {st.stage === 'interview' && <Interview onDone={refresh} />}
       {st.stage !== 'interview' && <GoalsEditor />}
       {st.stage === 'framework' && <FrameworkStep onDone={refresh} />}

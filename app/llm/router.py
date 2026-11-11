@@ -41,10 +41,10 @@ class Router:
 
     def complete(
         self, task_type, messages, schema=None, cwd=None, tools=None, *,
-        node_id=None, mcp_config=None, library_text=False,
+        node_id=None, mcp_config=None, library_text=False, track=None,
     ) -> Result:
         route = self.config.tasks.get(task_type)
-        req = Request(task_type, messages, schema, cwd, tools, node_id, mcp_config, light=bool(route and route.light))
+        req = Request(task_type, messages, schema, cwd, tools, node_id, mcp_config, light=bool(route and route.light), track=track)
         return self._run(req, library_text)
 
     def _run(self, req: Request, library_text: bool = False, queue: bool = True) -> Result:
@@ -106,13 +106,13 @@ class Router:
         )
 
     def _queue(self, req: Request, error: str) -> None:
-        self.store.enqueue_grade(req.task_type, asdict(req), req.node_id, error)
+        self.store.enqueue_grade(req.task_type, asdict(req), req.node_id, error, track=req.track)
 
     # --- grading queue (SPEC §3.1): retried with backoff and on app start ----
-    def retry_pending_grades(self, handler=None, now: float | None = None) -> list[tuple[int, Result]]:
-        """Retry due grades. `handler(row, result)` receives successes (M6 will write events)."""
+    def retry_pending_grades(self, handler=None, now: float | None = None, track: str | None = None) -> list[tuple[int, Result]]:
+        """Retry due grades (one track's, or all). `handler(row, result)` receives successes and writes the events."""
         done = []
-        for row in self.store.due_grades(now):
+        for row in self.store.due_grades(now, track):
             req = Request(**json.loads(row["request"]))
             try:
                 res = self._run(req, queue=False)
