@@ -19,13 +19,13 @@ export function JobsTray() {
 
   return (
     <aside aria-label="Jobs" className="fixed inset-x-0 bottom-0 border-t bg-white/95 px-4 py-2 text-sm shadow-lg">
-      <div className="mx-auto max-w-xl">
+      <div className="mx-auto max-w-6xl">
         <div className="flex items-center justify-between">
           <span className="font-semibold">Jobs{active.length > 0 && ` (${active.length} active)`}</span>
           <span className={connected ? 'text-green-600' : 'text-amber-600'}>{connected ? 'live' : 'reconnecting…'}</span>
         </div>
         {active.length === 0 && recent.length === 0 && <p className="text-gray-500">No jobs yet.</p>}
-        <ul className="space-y-1">
+        <ul className="max-h-24 space-y-1 overflow-auto">
           {[...active, ...recent].map((j) => (
             <JobRow key={j.id} job={j} />
           ))}
