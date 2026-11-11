@@ -327,6 +327,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/planner/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Options */
+        get: operations["getPlannerOptions"];
+        put?: never;
+        /**
+         * Generate Options
+         * @description Heavy LLM call: 2-4 next-node options from goals, scores and history; stored for POST /build.
+         */
+        post: operations["generatePlannerOptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/build": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Build
+         * @description Build the chosen option as a background `build_challenge` job (progress via /api/jobs/stream).
+         */
+        post: operations["startBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/build/{node_dir}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Build
+         * @description Build record: attempts, agent usage, tool calls, gate results (no answer-key content).
+         */
+        get: operations["getBuildRecord"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rfic/container": {
         parameters: {
             query?: never;
@@ -471,6 +532,41 @@ export interface components {
         ApproveBody: {
             framework?: components["schemas"]["Framework"] | null;
         };
+        /**
+         * BranchOption
+         * @description SPEC §5.6
+         */
+        BranchOption: {
+            /** Title */
+            title: string;
+            /** Why Now */
+            why_now: string;
+            /** Kind */
+            kind: string;
+            /** Domain */
+            domain: string;
+            /** Subskills */
+            subskills: string[];
+            /** Tier */
+            tier: number;
+            /** Size Est Min */
+            size_est_min: number;
+        };
+        /** BuildBody */
+        BuildBody: {
+            /** Option Index */
+            option_index: number;
+        };
+        /** BuildStarted */
+        BuildStarted: {
+            /** Job Id */
+            job_id: string;
+            /** Node Id */
+            node_id: number;
+            /** Node Dir */
+            node_dir: string;
+            interleaving_targets: components["schemas"]["InterleavingTargets"];
+        };
         /** Check */
         Check: {
             /** Id */
@@ -609,6 +705,15 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** InterleavingTargets */
+        InterleavingTargets: {
+            /** Open Misconceptions */
+            open_misconceptions: {
+                [key: string]: unknown;
+            }[];
+            /** Stale Subskills */
+            stale_subskills: string[];
+        };
         /** InterviewTurn */
         InterviewTurn: {
             /** Answer */
@@ -686,6 +791,15 @@ export interface components {
             framework_frozen: boolean;
             /** Diagnostic Done */
             diagnostic_done: boolean;
+        };
+        /** PlannerOptions */
+        PlannerOptions: {
+            /** Options */
+            options: components["schemas"]["BranchOption"][];
+            /** Model */
+            model: string;
+            /** Ts */
+            ts: string;
         };
         /** ProbeResult */
         ProbeResult: {
@@ -1269,6 +1383,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnswerResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getPlannerOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlannerOptions"];
+                };
+            };
+        };
+    };
+    generatePlannerOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlannerOptions"];
+                };
+            };
+        };
+    };
+    startBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BuildBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getBuildRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_dir: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

@@ -52,7 +52,7 @@ def test_shipped_routing_yaml_is_valid_and_complete():
         "grade_diagnostic", "grade_tier_exam", "interview", "tutor_chat", "oral_dialogue",
         "diagnostic_dialogue", "summarize",
     }
-    assert set(cfg.tasks) == spec_tasks
+    assert set(cfg.tasks) == spec_tasks | {"show_me"}  # show_me: SPEC 7.4 heavy call with no §3 task name (DECISIONS M5)
     assert [e.backend for e in cfg.tasks["plan_branches"].chain] == ["claude_code", "cursor_cli"]
     g = cfg.tasks["grade_oral"]
     assert g.grading and len(g.chain) == 1 and g.chain[0].model
@@ -64,7 +64,7 @@ def test_shipped_routing_yaml_is_valid_and_complete():
 def test_mock_call_logs_and_counts(tmp_path):
     r, _ = make_router(tmp_path, {"plan_branches": {"chain": [{"backend": "mock", "model": "m"}]}})
     res = r.complete("plan_branches", MSG, node_id=7)
-    assert res.json["options"][0]["tier"] == 2 and res.backend == "mock"
+    assert res.json["options"][0]["tier"] == 1 and len(res.json["options"]) == 2 and res.backend == "mock"
     (call,) = r.store.calls()
     assert (call["task_type"], call["backend"], call["status"], call["node_id"]) == ("plan_branches", "mock", "ok", 7)
     assert r.store.count("mock", "m") == 1
@@ -364,3 +364,41 @@ def test_oral_dialogue_is_haiku_first_with_free_fallback():
     assert oral.light and (oral.chain[0].backend, oral.chain[0].model) == ("claude_code", "claude-haiku-5-5")
     assert [e.backend for e in oral.chain[1:]] == ["openrouter"] * 3
     assert cfg.tasks["tutor_chat"].chain[0].backend == "openrouter"  # the other light tasks keep free-first
+
+
+def test_per_task_timeout_overrides_backend_timeout(tmp_path):
+    class Spy:
+        def __init__(self):
+            self.timeouts = []
+
+        def complete(self, req, model, timeout_s):
+            self.timeouts.append((req.task_type, timeout_s))
+            return MockAdapter().complete(Request("summarize", MSG), model, timeout_s)
+
+    cfg = parse_routing({"timeout_s": {"mock": 30}, "tasks": {
+        "summarize": {"chain": [{"backend": "mock"}]},
+        "build_challenge": {"timeout_s": 2700, "chain": [{"backend": "mock"}]}}})
+    spy = Spy()
+    r = Router(cfg, Store(tmp_path / "llm.db"), {"mock": spy})
+    r.complete("summarize", MSG)
+    r.complete("build_challenge", MSG)
+    assert spy.timeouts == [("summarize", 30), ("build_challenge", 2700)]
+    assert load_routing().tasks["build_challenge"].timeout_s == 2700
+
+
+def test_claude_adapter_reports_turns_and_denied_tool_names(monkeypatch):
+    out = {"result": "done", "is_error": False, "num_turns": 26, "duration_ms": 334000, "total_cost_usd": 0.6,
+           "usage": {"input_tokens": 30, "output_tokens": 9, "cache_read_input_tokens": 100},
+           "modelUsage": {"claude-sonnet-5-5": {}, "claude-haiku-5-5": {}},
+           "permission_denials": [{"tool_name": "Bash", "tool_use_id": "x", "tool_input": {}}, {"tool_name": "Edit"}]}
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, json.dumps(out), ""))
+    req = Request("build_challenge", MSG, tools=["mcp__rfic__write_file"], mcp_config="m.json")
+    res = ClaudeCodeAdapter(binary="claude").complete(req, "claude-sonnet-5-5", 5)
+    assert res.meta == {"num_turns": 26, "duration_ms": 334000, "permission_denials": ["Bash", "Edit"],
+                        "models": ["claude-haiku-5-5", "claude-sonnet-5-5"], "notional_cost_usd": 0.6}
+    assert res.usage["input_tokens"] == 130
+
+
+def test_show_me_is_a_heavy_route():
+    t = load_routing().tasks["show_me"]
+    assert not t.light and not t.grading and t.chain[0].backend == "claude_code"

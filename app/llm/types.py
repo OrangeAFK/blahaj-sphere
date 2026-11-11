@@ -43,3 +43,4 @@ class Result:
     model: str
     latency_ms: int = 0
     attempts: list[dict] = field(default_factory=list)
+    meta: dict = field(default_factory=dict)  # backend extras for logs, e.g. claude_code num_turns / permission denials

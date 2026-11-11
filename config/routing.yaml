@@ -22,6 +22,7 @@ x-heavy: &heavy
 
 # Builder model pinned by the M2.5 spike (DECISIONS): Sonnet 5.5 passed the gate 3/3 with 0 retries.
 x-builder: &builder
+  timeout_s: 2700          # per attempt; spike node c needed 1427 s, the claude_code default is 900 (DECISIONS M5)
   chain:
     - {backend: claude_code, model: claude-sonnet-5-5}
     - {backend: cursor_cli}
@@ -53,6 +54,7 @@ tasks:
   build_challenge: *builder
   draft_framework: *heavy
   rescope: *heavy
+  show_me: *heavy          # SPEC 7.4: heavy model with _hidden/ access
   grade_oral: *grading
   grade_prelab_explain: *grading
   grade_diagnostic: *grading

@@ -7,6 +7,9 @@ time; stdout carries protocol messages only (logs go to stderr).
 
 import json
 import sys
+import time
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, TextIO
 
 from domains.rfic.tools_mcp.tools import TOOL_ERRORS, RficTools
@@ -139,9 +142,10 @@ _BY_NAME = {t["name"]: t for t in TOOL_SPECS}
 
 
 class McpServer:
-    def __init__(self, tools: RficTools, log: Callable[[str], None] | None = None):
+    def __init__(self, tools: RficTools, log: Callable[[str], None] | None = None, call_log: Path | None = None):
         self.tools = tools
         self._log = log or (lambda s: print(s, file=sys.stderr, flush=True))
+        self.call_log = Path(call_log) if call_log else None  # JSONL audit of tool calls (Builder records, DECISIONS M5)
 
     # ---- protocol ----
 
@@ -186,13 +190,31 @@ class McpServer:
         unknown = set(args) - allowed
         if unknown:
             return _text({"error": f"unexpected arguments: {sorted(unknown)}; allowed: {sorted(allowed)}"}, is_error=True)
+        t0 = time.monotonic()
         try:
             out = getattr(self.tools, spec["method"])(**args)
         except TOOL_ERRORS as e:
+            self._audit(name, args, t0, str(e))
             return _text({"error": str(e)}, is_error=True)
         except TypeError as e:  # missing/ill-typed arguments
+            self._audit(name, args, t0, f"bad arguments: {e}")
             return _text({"error": f"bad arguments: {e}"}, is_error=True)
+        self._audit(name, args, t0, None)
         return _text(out, is_error=False)
+
+    def _audit(self, name: str | None, args: dict, t0: float, error: str | None) -> None:
+        """One JSONL line per tool call: arguments without file contents. Never breaks the call."""
+        if self.call_log is None:
+            return
+        brief = {k: (f"<{len(v)} chars>" if k == "content" and isinstance(v, str) else v) for k, v in args.items()}
+        line = {"ts": datetime.now().astimezone().isoformat(timespec="seconds"), "tool": name, "args": brief,
+                "is_error": error is not None, "error": (error or "")[:300] or None, "seconds": round(time.monotonic() - t0, 2)}
+        try:
+            self.call_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.call_log, "a", encoding="utf-8") as f:
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+        except OSError as e:
+            self._log(f"call log write failed: {e}")
 
     # ---- stdio loop ----
 

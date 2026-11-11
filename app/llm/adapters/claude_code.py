@@ -52,6 +52,18 @@ def _usage(u: dict) -> dict:
     }
 
 
+def _meta(out: dict) -> dict:
+    """Run details the Builder logs: turns, timing, which tools were denied (names, not just a count; DECISIONS M2.5)."""
+    denials = out.get("permission_denials") or []
+    return {
+        "num_turns": out.get("num_turns"),
+        "duration_ms": out.get("duration_ms"),
+        "permission_denials": [d.get("tool_name", "?") if isinstance(d, dict) else str(d) for d in denials],
+        "models": sorted((out.get("modelUsage") or {}).keys()),
+        "notional_cost_usd": out.get("total_cost_usd"),  # costBasis list under subscription login, not a charge (DECISIONS M0)
+    }
+
+
 def clean_env(env: dict[str, str] | None = None) -> dict[str, str]:
     src = os.environ if env is None else env
     return {k: v for k, v in src.items() if k not in STRIPPED_ENV}
@@ -134,5 +146,5 @@ class ClaudeCodeAdapter:
         return Result(
             text=text, json=parse_json(text) if req.schema is not None else None,
             usage=_usage(usage),
-            backend=self.name, model=used_model, latency_ms=int((time.monotonic() - t0) * 1000),
+            backend=self.name, model=used_model, latency_ms=int((time.monotonic() - t0) * 1000), meta=_meta(out),
         )

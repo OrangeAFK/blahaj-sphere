@@ -197,6 +197,8 @@ def _structure(node: Path, errors: list[str], warnings: list[str]) -> dict | Non
             if not (isinstance(tol, dict) and len(tol) == 1 and set(tol) <= {"rel", "abs"} and _is_num(next(iter(tol.values())))
                     and next(iter(tol.values())) > 0):  # fmt: skip
                 errors.append(f"{where}: tolerance must be {{rel: x}} or {{abs: x}} with x > 0")
+            if not _is_num(it.get("hand_estimate")):
+                errors.append(f"{where}: numeric items need `hand_estimate`: your own hand calculation, a number in `unit` (SPEC §5.3)")
             if "value" in it:
                 warnings.append(f"{where}: Builder wrote a `value`; the gate overwrites it from ref_result.json")
         elif it.get("kind") == "explain":
@@ -260,14 +262,21 @@ def _file_hygiene(node: Path, node_md_text: str, errors: list[str]) -> None:
 
 
 def _interleaving(s: dict, ctx: GateContext, errors: list[str]) -> None:
+    """Gate 4. `interleaved: true` earns 1.5x weight and resolves misconceptions (SPEC §7.7, §8.2), so the flag is only
+    valid on an item whose subskill is one of the given targets; when targets exist, at least one such oral item is required."""
     targets = ctx.targets()
+    flagged = [it for it in s["oral"] if it.get("interleaved") is True]
+    wrong = [f"{it.get('id')}:{it.get('subskill')}" for it in flagged if it.get("subskill") not in targets]
+    if wrong:
+        allowed = f"one of {sorted(targets)}" if targets else "none (no interleaving targets were given; set interleaved: false)"
+        errors.append(f"gate 4 (interleaving): oral items marked interleaved: true must target an interleaving subskill; {wrong} do not (allowed: {allowed})")
     if not targets:
         return
     hit = [it["id"] for it in s["prelab"] + s["oral"] if it.get("subskill") in targets]
     if not hit:
         errors.append(f"gate 4 (interleaving): no prelab or oral item targets any of {sorted(targets)}; add one using the exact subskill id")
-    if not any(it.get("interleaved") is True for it in s["oral"]):
-        errors.append("gate 4 (interleaving): at least one oral_key item must have interleaved: true (SPEC §5.4)")
+    if not any(it.get("subskill") in targets for it in flagged):
+        errors.append(f"gate 4 (interleaving): at least one oral_key item must have interleaved: true and a subskill in {sorted(targets)} (SPEC §5.4)")
 
 
 def _hints_vocab(s: dict, errors: list[str], warnings: list[str]) -> None:
@@ -390,16 +399,59 @@ def _prelab_values(node: Path, s: dict, res: GateResult, metrics: dict | None) -
         return
     for it in numeric:
         it["value"] = metrics[it["metric"]]
+        _tolerance_margin(it, res)
     with open(node / PRELAB_KEY, "w", encoding="utf-8", newline="\n") as f:
         yaml.safe_dump(s["pk"], f, sort_keys=False, allow_unicode=True)
-    # Heuristic: a number in the hints within 1 % of a key value (ignoring tiny integers like 2 or 3).
-    hint_nums = [n for n in map(float, _NUMBER.findall(s.get("_hint_text", ""))) if not (n.is_integer() and abs(n) < 10)]
+    # Heuristic: a number in the hints or the starter files within 1 % of a key value (ignoring tiny integers like 2 or 3).
+    # A starter that already holds the answer usually means the metric is read back from a design file, not simulated.
+    hint_nums = _numbers(s.get("_hint_text", ""))
+    starter_nums = {p.relative_to(node).as_posix(): _numbers(_text_or_empty(p)) for p in sorted((node / "workspace").rglob("*")) if p.is_file()}
     for it in numeric:
         v = float(it["value"])
         if v == 0 or (v.is_integer() and abs(v) < 10):
             continue
         if any(abs(n - v) <= 0.01 * abs(v) for n in hint_nums):
             res.warnings.append(f"hints.yaml may leak prelab value {it['id']}={v:g}")
+        files = [f for f, nums in starter_nums.items() if any(abs(n - v) <= 0.01 * abs(v) for n in nums)]
+        if files:
+            res.warnings.append(f"starter files {files} contain prelab value {it['id']}={v:g}: is metric {it['metric']} simulated, "
+                                f"or read back from a design file the learner edits?")  # fmt: skip
+
+
+def _numbers(text: str) -> list[float]:
+    return [n for n in map(float, _NUMBER.findall(text)) if not (n.is_integer() and abs(n) < 10)]
+
+
+def _text_or_empty(p: Path) -> str:
+    try:
+        return p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _tolerance_margin(it: dict, res: GateResult) -> None:
+    """A correct hand calculation must land inside the tolerance with margin (DECISIONS M2.5 #70, SPEC §5.3):
+    rel >= 1.5 x |hand - sim| / |sim|, abs >= 1.5 x |hand - sim|."""
+    h, v, tol = it.get("hand_estimate"), float(it["value"]), it.get("tolerance") or {}
+    if not _is_num(h) or not tol:
+        return  # already reported by G0
+    where = f"gate 3: prelab_key.yaml {it['id']}"
+    err = abs(float(h) - v)
+    if "abs" in tol:
+        need = 1.5 * err
+        if tol["abs"] < need:
+            res.errors.append(f"{where}: hand_estimate {h:g} vs simulated {v:g} {it.get('unit', '')} needs tolerance abs >= {need:.4g} "
+                              f"(1.5 x the hand-calc error), got {tol['abs']:g}; widen it or fix the hand estimate")  # fmt: skip
+        return
+    if v == 0:
+        res.errors.append(f"{where}: simulated value is 0, so a rel tolerance is meaningless; use {{abs: x}}")
+        return
+    need = 1.5 * err / abs(v)
+    if tol["rel"] < need:
+        res.errors.append(f"{where}: hand_estimate {h:g} vs simulated {v:g} {it.get('unit', '')} is {err / abs(v):.1%} off; tolerance "
+                          f"needs rel >= {need:.3f} (1.5 x that), got {tol['rel']:g}; widen it or fix the hand estimate")  # fmt: skip
+    elif tol["rel"] > 0.5:
+        res.warnings.append(f"prelab_key.yaml {it['id']}: tolerance rel {tol['rel']:g} > 0.5 makes the prediction weakly informative")
 
 
 # ---- driver ----

@@ -333,3 +333,22 @@ def test_openems_progress_uses_energy_decay_when_step_limit_is_the_default(fake,
     ]
     RficTools(fake, jobs=None, node="n1").run_openems("workspace/sim.py", job=JobHandle(store, job.id))
     assert store.get(job.id).progress == 0.5  # 30 dB of an assumed 60 dB, not 3060/1e9
+
+
+def test_call_log_records_each_tool_call_without_file_contents(tools, nodes_root, tmp_path):
+    log = tmp_path / "calls.jsonl"
+    s = McpServer(tools, call_log=log)
+    call(s, "write_file", {"path": "workspace/peek.py", "content": "print(1)"})
+    call(s, "delete_file", {"path": "workspace/peek.py"})
+    call(s, "delete_file", {"path": "workspace"})  # protected: an error, still logged
+    lines = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
+    assert [(x["tool"], x["is_error"]) for x in lines] == [("write_file", False), ("delete_file", False), ("delete_file", True)]
+    assert lines[0]["args"] == {"path": "workspace/peek.py", "content": "<8 chars>"} and "protected" in lines[2]["error"]
+
+
+def test_mcp_config_passes_call_log(tmp_path, nodes_root):
+    from domains.rfic.tools_mcp.config import mcp_config
+
+    args = mcp_config(nodes_root, "n1", tmp_path, tmp_path / "c.jsonl")["mcpServers"]["rfic"]["args"]
+    assert args[args.index("--call-log") + 1] == str(tmp_path / "c.jsonl")
+    assert "--call-log" not in mcp_config(nodes_root, "n1")["mcpServers"]["rfic"]["args"]

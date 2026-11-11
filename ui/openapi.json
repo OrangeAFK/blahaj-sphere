@@ -565,6 +565,122 @@
         }
       }
     },
+    "/api/planner/options": {
+      "get": {
+        "summary": "Get Options",
+        "operationId": "getPlannerOptions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannerOptions"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Generate Options",
+        "description": "Heavy LLM call: 2-4 next-node options from goals, scores and history; stored for POST /build.",
+        "operationId": "generatePlannerOptions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannerOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/build": {
+      "post": {
+        "summary": "Start Build",
+        "description": "Build the chosen option as a background `build_challenge` job (progress via /api/jobs/stream).",
+        "operationId": "startBuild",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/build/{node_dir}": {
+      "get": {
+        "summary": "Get Build",
+        "description": "Build record: attempts, agent usage, tool calls, gate results (no answer-key content).",
+        "operationId": "getBuildRecord",
+        "parameters": [
+          {
+            "name": "node_dir",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Node Dir"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Getbuildrecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rfic/container": {
       "get": {
         "summary": "Container Status",
@@ -801,6 +917,93 @@
         },
         "type": "object",
         "title": "ApproveBody"
+      },
+      "BranchOption": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "why_now": {
+            "type": "string",
+            "title": "Why Now"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "subskills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Subskills"
+          },
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "size_est_min": {
+            "type": "integer",
+            "title": "Size Est Min"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "why_now",
+          "kind",
+          "domain",
+          "subskills",
+          "tier",
+          "size_est_min"
+        ],
+        "title": "BranchOption",
+        "description": "SPEC \u00a75.6"
+      },
+      "BuildBody": {
+        "properties": {
+          "option_index": {
+            "type": "integer",
+            "title": "Option Index"
+          }
+        },
+        "type": "object",
+        "required": [
+          "option_index"
+        ],
+        "title": "BuildBody"
+      },
+      "BuildStarted": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "node_id": {
+            "type": "integer",
+            "title": "Node Id"
+          },
+          "node_dir": {
+            "type": "string",
+            "title": "Node Dir"
+          },
+          "interleaving_targets": {
+            "$ref": "#/components/schemas/InterleavingTargets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "node_id",
+          "node_dir",
+          "interleaving_targets"
+        ],
+        "title": "BuildStarted"
       },
       "Check": {
         "properties": {
@@ -1155,6 +1358,31 @@
         ],
         "title": "Health"
       },
+      "InterleavingTargets": {
+        "properties": {
+          "open_misconceptions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Open Misconceptions"
+          },
+          "stale_subskills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Stale Subskills"
+          }
+        },
+        "type": "object",
+        "required": [
+          "open_misconceptions",
+          "stale_subskills"
+        ],
+        "title": "InterleavingTargets"
+      },
       "InterviewTurn": {
         "properties": {
           "answer": {
@@ -1365,6 +1593,32 @@
           "diagnostic_done"
         ],
         "title": "OnboardingState"
+      },
+      "PlannerOptions": {
+        "properties": {
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/BranchOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "ts": {
+            "type": "string",
+            "title": "Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "options",
+          "model",
+          "ts"
+        ],
+        "title": "PlannerOptions"
       },
       "ProbeResult": {
         "properties": {

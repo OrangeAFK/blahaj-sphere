@@ -70,7 +70,7 @@ class Router:
                 continue
             self.store.increment(e.backend, e.model)
             try:
-                res = adapter.complete(req, e.model, self.config.timeout(e.backend))
+                res = adapter.complete(req, e.model, self.config.timeout(e.backend, req.task_type))
             except RetryableError as ex:
                 if isinstance(ex, RateLimited) and e.backend == "openrouter":
                     self.store.set_cooldown(e.backend, e.model, self.clock() + self.config.rate_limit_cooldown_s)

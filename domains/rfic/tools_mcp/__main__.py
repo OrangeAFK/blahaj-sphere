@@ -1,4 +1,4 @@
-"""`python -m domains.rfic.tools_mcp --nodes-root <dir> [--node <name>] [--data-dir <dir>]`"""
+"""`python -m domains.rfic.tools_mcp --nodes-root <dir> [--node <name>] [--data-dir <dir>] [--call-log <file.jsonl>]`"""
 
 import argparse
 import os
@@ -16,6 +16,7 @@ def main() -> None:
     ap.add_argument("--nodes-root", default=os.environ.get("BLAHAJ_NODES_ROOT"), help="host dir mounted at /work/nodes")
     ap.add_argument("--node", default=os.environ.get("BLAHAJ_NODE"), help="pin to one node directory (agent sandbox)")
     ap.add_argument("--data-dir", default=None, help="BlahajSphere data dir (for the shared jobs DB)")
+    ap.add_argument("--call-log", default=None, help="append one JSON line per tool call to this file")
     args = ap.parse_args()
     if args.data_dir:
         os.environ["BLAHAJ_DATA_DIR"] = args.data_dir
@@ -28,7 +29,7 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001 - simulations still work without UI job tracking
         print(f"jobs db unavailable, continuing without job tracking: {e}", file=sys.stderr)
         jobs = None
-    McpServer(RficTools(containers, jobs, node=args.node)).serve()
+    McpServer(RficTools(containers, jobs, node=args.node), call_log=Path(args.call_log) if args.call_log else None).serve()
 
 
 if __name__ == "__main__":

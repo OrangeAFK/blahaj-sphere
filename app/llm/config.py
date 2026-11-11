@@ -21,6 +21,7 @@ class TaskRoute:
     chain: list[Entry]
     grading: bool = False
     light: bool = False
+    timeout_s: float | None = None  # overrides the backend timeout for this task (long Builder runs, DECISIONS M5)
 
 
 @dataclass
@@ -31,7 +32,10 @@ class RoutingConfig:
     default_daily_cap: int = 50
     rate_limit_cooldown_s: float = 1800  # a free model that returned 429 is skipped this long
 
-    def timeout(self, backend: str) -> float:
+    def timeout(self, backend: str, task_type: str | None = None) -> float:
+        route = self.tasks.get(task_type) if task_type else None
+        if route is not None and route.timeout_s is not None:
+            return route.timeout_s
         return self.timeout_s.get(backend, 900)
 
     def cap_for(self, e: Entry) -> int | None:
@@ -53,7 +57,8 @@ def parse_routing(data: dict) -> RoutingConfig:
             chain.append(e)
         if not chain:
             raise ValueError(f"routing: task {name!r} has an empty chain")
-        tasks[name] = TaskRoute(chain, bool(t.get("grading", False)), bool(t.get("light", False)))
+        to = t.get("timeout_s")
+        tasks[name] = TaskRoute(chain, bool(t.get("grading", False)), bool(t.get("light", False)), None if to is None else float(to))
     return RoutingConfig(
         tasks=tasks,
         timeout_s={k: float(v) for k, v in (data.get("timeout_s") or {}).items()},

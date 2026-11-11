@@ -1,0 +1,1 @@
+{"json":{"action":"replace","reason_class":"too_hard","changes":"Split off the Smith chart step.","option":{"title":"Read impedances off a Smith chart","why_now":"Foundation for the L-match.","kind":"challenge","domain":"matching","subskills":["smith_chart.navigation"],"tier":1,"size_est_min":20}},"usage":{}}

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from app.domains import Domain
+from app.domains import BuilderHooks, Domain
 from app.jobs.manager import JobManager
 from app.jobs.store import Job, JobStore, default_db_path
 from app.preflight import Check
@@ -49,6 +49,24 @@ def run_checker(node_dir: Path, work_rel: str, out_rel: str, timeout_s: float) -
     return RficTools(ContainerManager(root), jobs).run_checker_at(node_dir.name, work_rel, out_rel, timeout_s)
 
 
+def _builder_mcp_config(node_dir: Path, out_path: Path, call_log: Path) -> Path:
+    """MCP config pinned to one node; the node must live under the mounted nodes root (SPEC §4.2)."""
+    from app.settings import data_dir
+    from domains.rfic.tools_mcp.config import write_mcp_config
+
+    root = default_nodes_root().resolve()
+    node_dir = Path(node_dir).resolve()
+    if node_dir.parent != root:
+        raise ContainerError(f"{node_dir} is not a node directory under {root} (the container only mounts that)")
+    return write_mcp_config(out_path, root, node_dir.name, data_dir(), call_log)
+
+
+def _tool_names() -> list[str]:
+    from domains.rfic.tools_mcp.config import tool_names
+
+    return tool_names()
+
+
 DOMAIN = Domain(
     name="rfic",
     image=IMAGE,
@@ -58,4 +76,5 @@ DOMAIN = Domain(
     fixes={"build_image": _build_image_fix},
     run_checker=run_checker,
     framework_template=Path(__file__).parent / "framework_template.yaml",
+    builder=BuilderHooks(prompt=Path(__file__).parent / "prompts" / "builder.md", tool_names=_tool_names, mcp_config=_builder_mcp_config),
 )

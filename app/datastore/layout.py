@@ -17,6 +17,10 @@ archive/nodes/*/workspace/**/*.s[0-9][0-9]p
 archive/nodes/*/workspace/**/*_sim/
 archive/nodes/*/workspace/**/openems_sim*/
 archive/nodes/*/.gate/
+# Disposable M2/M2.5 spike material and failed builds (DECISIONS M5)
+_spike_archive/
+spike/
+builds/failed/
 __pycache__/
 *.pyc
 """
@@ -72,6 +76,8 @@ def init_repo(root: Path) -> None:
     """`data/` is its own git repo (the parent repo ignores it)."""
     if not (Path(root) / ".git").exists():
         _git(Path(root), "init", "-q")
+    # Node files run inside the Linux container: never let Windows git rewrite them to CRLF (DECISIONS M5).
+    _git(Path(root), "config", "core.autocrlf", "false")
 
 
 def commit_all(root: Path, message: str) -> bool:

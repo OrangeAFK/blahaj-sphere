@@ -33,8 +33,10 @@ Set the corner to the spec, somewhere between the two limits. Edit `rc.sp`.
 
 PRELAB_KEY = {
     "items": [
-        {"id": "p1", "kind": "numeric", "subskill": "filters.rc_corner", "unit": "Hz", "metric": "f3db_hz", "tolerance": {"rel": 0.15}},
-        {"id": "p2", "kind": "numeric", "subskill": "filters.rc_corner", "unit": "ohm", "metric": "r_ohm", "tolerance": {"abs": 5.0}},
+        {"id": "p1", "kind": "numeric", "subskill": "filters.rc_corner", "unit": "Hz", "metric": "f3db_hz", "tolerance": {"rel": 0.15},
+         "hand_estimate": 150000.0},
+        {"id": "p2", "kind": "numeric", "subskill": "filters.rc_corner", "unit": "ohm", "metric": "r_ohm", "tolerance": {"abs": 5.0},
+         "hand_estimate": 1002.0},
         {"id": "p3", "kind": "explain", "subskill": "sparams.reflection_coefficient", "anchors": {0: "a", 1: "b", 2: "c", 3: "d"}},
     ]
 }
@@ -43,7 +45,7 @@ ORAL_KEY = {
         {"id": "o1", "subskill": "filters.rc_corner", "tier": 1, "question": "why?", "anchors": {0: "a", 1: "b", 2: "c", 3: "d"},
          "probes": ["and then?"], "interleaved": False},
         {"id": "o2", "subskill": "sparams.reflection_coefficient", "tier": 1, "question": "what if?",
-         "anchors": {0: "a", 1: "b", 2: "c", 3: "d"}, "probes": ["more?"], "interleaved": True},
+         "anchors": {0: "a", 1: "b", 2: "c", 3: "d"}, "probes": ["more?"], "interleaved": False},
     ]
 }  # fmt: skip
 HINTS = {"ladders": [{"subskill": s, "hints": ["think", "narrower", "method"]} for s in ("filters.rc_corner", "sparams.reflection_coefficient")]}
@@ -91,7 +93,28 @@ class FakeRunner:
         return {"verdict": verdict, "exit_code": code, "seconds": self.seconds, "result": result, "problem": None, "stderr_tail": "boom" if code == 2 else ""}
 
 
+def _flag(node, item_id="o2", value=True):
+    ok = yaml.safe_load((node / "_hidden" / "oral_key.yaml").read_text())
+    for it in ok["items"]:
+        if it["id"] == item_id:
+            it["interleaved"] = value
+    _y(node / "_hidden" / "oral_key.yaml", ok)
+
+
+def _prelab(node, **changes):
+    pk = json.loads(json.dumps(PRELAB_KEY))
+    for item_id, fields in changes.items():
+        it = next(i for i in pk["items"] if i["id"] == item_id)
+        for k, v in fields.items():
+            if v is None:
+                it.pop(k, None)
+            else:
+                it[k] = v
+    _y(node / "_hidden" / "prelab_key.yaml", pk)
+
+
 def test_valid_node_passes_and_gate_writes_values(node):
+    _flag(node)
     r = FakeRunner()
     res = run_gate(node, r, GateContext(stale_subskills=["sparams.reflection_coefficient"]))
     assert res.passed, res.errors
@@ -104,7 +127,7 @@ def test_valid_node_passes_and_gate_writes_values(node):
     assert r.calls[0] == (".gate/reference", "_hidden/ref_result.json")
     assert r.calls[1][0] == ".gate/starter" and not (node / ".gate").exists()  # copies used, then removed
     assert (node / "workspace" / "rc.sp").read_text() == "R1 a b 10k\n"
-    assert run_gate(node, FakeRunner()).passed  # re-runnable: its own outputs are not "undeclared"
+    assert run_gate(node, FakeRunner(), GateContext(stale_subskills=["sparams.reflection_coefficient"])).passed  # re-runnable
 
 
 @pytest.mark.parametrize(
@@ -208,13 +231,53 @@ def test_gate4_interleaving(node):
     assert run_gate(node, FakeRunner(), GateContext()).passed  # vacuous without targets
     ctx = GateContext(open_misconceptions=[{"text": "x", "subskill": "noise.figure_cascade"}])
     res = run_gate(node, FakeRunner(), ctx)
-    assert any("gate 4" in e and "noise.figure_cascade" in e for e in res.errors)
-    ok = json.loads(json.dumps(ORAL_KEY))
-    for it in ok["items"]:
-        it["interleaved"] = False
-    _y(node / "_hidden" / "oral_key.yaml", ok)
-    res = run_gate(node, FakeRunner(), GateContext(stale_subskills=["filters.rc_corner"]))
-    assert [e for e in res.errors if "gate 4" in e] == ["gate 4 (interleaving): at least one oral_key item must have interleaved: true (SPEC §5.4)"]
+    assert any("gate 4" in e and "no prelab or oral item targets" in e and "noise.figure_cascade" in e for e in res.errors)
+    # an item targets the stale subskill, but no oral item is flagged
+    res = run_gate(node, FakeRunner(), GateContext(stale_subskills=["sparams.reflection_coefficient"]))
+    assert [e for e in res.errors if "gate 4" in e] == [
+        "gate 4 (interleaving): at least one oral_key item must have interleaved: true and a subskill in "
+        "['sparams.reflection_coefficient'] (SPEC §5.4)"
+    ]
+    _flag(node)
+    assert run_gate(node, FakeRunner(), GateContext(stale_subskills=["sparams.reflection_coefficient"])).passed
+
+
+@pytest.mark.parametrize("ctx", [GateContext(), GateContext(stale_subskills=["sparams.reflection_coefficient"])])
+def test_gate4_interleaved_flag_must_target_a_target(node, ctx):
+    _flag(node, "o1")  # filters.rc_corner is the node's own subskill, never a target here
+    res = run_gate(node, FakeRunner(), ctx)
+    assert any("must target an interleaving subskill" in e and "o1:filters.rc_corner" in e for e in res.errors), res.errors
+
+
+def test_hand_estimate_is_required(node):
+    _prelab(node, p1={"hand_estimate": None})
+    r = FakeRunner()
+    res = run_gate(node, r)
+    assert r.calls == [] and any("p1: numeric items need `hand_estimate`" in e for e in res.errors)
+
+
+@pytest.mark.parametrize(
+    "changes, needle",
+    [
+        ({"p1": {"hand_estimate": 120000.0}}, "needs rel >= 0.33"),  # 22 % off, rel 0.15 too tight
+        ({"p2": {"hand_estimate": 1004.0}}, "needs tolerance abs >= 6"),  # 4 ohm off, abs 5 < 6
+    ],
+)
+def test_tolerance_must_cover_hand_estimate_with_margin(node, changes, needle):
+    _prelab(node, **changes)
+    res = run_gate(node, FakeRunner())
+    assert not res.passed and any(e.startswith("gate 3") and needle in e for e in res.errors), res.errors
+
+
+def test_tolerance_edge_cases(node):
+    _prelab(node, p1={"hand_estimate": 153918.2, "tolerance": {"rel": 0.6}})
+    res = run_gate(node, FakeRunner())
+    assert res.passed and any("p1: tolerance rel 0.6" in w for w in res.warnings)
+    _prelab(node, p1={"hand_estimate": 0.0})
+    res = run_gate(node, FakeRunner(ref={**REF, "metrics": {"f3db_hz": 0.0, "r_ohm": 1000.0}}))
+    assert any("rel tolerance is meaningless" in e for e in res.errors)
+    _prelab(node, p1={"hand_estimate": 0.01, "tolerance": {"abs": 0.1}})
+    assert run_gate(node, FakeRunner(ref={**REF, "metrics": {"f3db_hz": 0.0, "r_ohm": 1000.0}})).passed
 
 
 def test_gate5_hints_and_vocab(node):
@@ -251,9 +314,17 @@ def test_cli_uses_domain_runner(node, monkeypatch, capsys):
 
     monkeypatch.setattr(g, "_domain_runner", lambda: FakeRunner())
     ctx = node.parent / "ctx.json"
-    ctx.write_text(json.dumps({"stale_subskills": ["filters.rc_corner"]}))
+    ctx.write_text(json.dumps({"stale_subskills": ["sparams.reflection_coefficient"]}))
+    _flag(node)
     assert main([str(node), "--context", str(ctx)]) == 0
     assert "GATE PASS" in capsys.readouterr().out
     monkeypatch.setattr(g, "_domain_runner", lambda: FakeRunner(starter_exit=0, starter={**STARTER, "pass": True}))
     assert main([str(node), "--json"]) == 1
     assert json.loads(capsys.readouterr().out)["passed"] is False
+
+
+def test_starter_holding_a_key_value_is_a_warning(node):
+    (node / "workspace" / "rc.sp").write_text("R1 a b 1000\n")  # the answer to p2 already sits in the starter
+    (node / "_hidden" / "reference_solution" / "rc.sp").write_text("R1 a b 1k\n")
+    res = run_gate(node, FakeRunner())
+    assert res.passed and any("starter files ['workspace/rc.sp'] contain prelab value p2=1000" in w for w in res.warnings), res.warnings

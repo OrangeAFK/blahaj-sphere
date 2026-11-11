@@ -9,8 +9,8 @@ A code gate checks your output after you finish (list at the end). Anything it r
 you as an error list, so self-check with `run_checker` before you stop.
 
 ## Input
-Given below the `---` line: the chosen option (title, kind, domain, subskills, tier, size_est_min),
-the node id and directory, the `created` timestamp, the pdk, learner goals/summary, and the
+Given below the `---` line: the chosen option (title, why_now, kind, domain, subskills, tier, size_est_min),
+the node id, slug and directory, the `created` timestamp, learner goals/summary/scores, and the
 **interleaving targets** (open misconceptions and stale subskills). Possibly a gate error list from a
 previous attempt: in that case your earlier files are still on disk; read them and fix only what is needed.
 
@@ -21,7 +21,7 @@ YAML frontmatter, then the learner-facing brief in Markdown.
 ```yaml
 ---
 id: <given>
-slug: <kebab-case>
+slug: <given>
 title: "<imperative, specific>"
 parents: []
 kind: challenge
@@ -31,7 +31,7 @@ tier: <given>
 size_est_min: <given>
 sim_runtime_s: null          # the gate measures and fills this
 image: rfic:1
-pdk: <given: sky130 | ihp-sg13g2 | none>
+pdk: <your choice: ihp-sg13g2 | sky130 | none>   # see "Choosing the PDK"
 run: ["python3 run_sim.py"]   # ONE line, JSON list of shell commands, run with cwd = the work dir
 proof_artifacts: [<learner files that prove the work>]
 vocab: [<8-20 domain terms the learner will say aloud, e.g. "S11", "gm", "Smith chart">]
@@ -48,7 +48,8 @@ than 10 minutes, add a line `> **Long run warning:** ~N min per simulation.`
 
 ### `workspace/` — the learner's starter
 - Same file names as `_hidden/reference_solution/`. Must simulate to completion but FAIL at least one
-  spec (wrong-but-plausible values, marked `TODO` in comments). It must not crash: the checker must
+  spec (wrong-but-plausible values, marked `TODO` in comments). Every value the learner must find is
+  wrong in the starter: it must not already contain a reference component value or a prelab answer. It must not crash: the checker must
   exit 1 on it, not 2.
 - If pdk ≠ none: `workspace/xschemrc` containing the single line
   `source $env(PDK_ROOT)/$env(PDK)/libs.tech/xschem/xschemrc`. Put the same file in the reference solution.
@@ -116,7 +117,9 @@ if __name__ == "__main__":
     main()
 ```
 - `metrics` must include every quantity a numeric prelab item asks about, computed from THIS run's
-  simulation output, as finite floats in the prelab item's unit. Emit metrics on the starter too
+  simulation output, as finite floats in the prelab item's unit. Never read a metric back from a design
+  parameter the learner edits (e.g. `.param Ls`): the prelab would then be graded against the reference's
+  component value, not a simulated result. Emit metrics on the starter too
   where they can be computed.
 - Specs need margin: the reference should pass by a clear margin, the starter fail clearly.
 - `checker.py` sits outside `_hidden/` and the learner can read it. Spec thresholds are fine there.
@@ -126,10 +129,14 @@ if __name__ == "__main__":
 ### `prelab.md` + `_hidden/prelab_key.yaml`
 3–5 numbered items the learner answers BEFORE simulating, each headed with its id (`**p1** ...`).
 At least 2 `numeric` items: hand-calculable predictions (e.g. Q, required L and C, gm, Ic, gain,
-Z0, εeff). Each numeric item in the key has `id, kind: numeric, subskill, unit, metric, tolerance`.
+Z0, εeff). Each numeric item in the key has `id, kind: numeric, subskill, unit, metric, tolerance, hand_estimate`.
 `metric` names a key in the checker's `metrics`. Do NOT write the value; the gate fills it from the
-reference run. Choose tolerance so a correct hand calculation lands inside it (typically
-`{rel: 0.15}`; looser where the simulation includes second-order effects). Unit in prelab.md is fixed
+reference run. `hand_estimate` is YOUR hand calculation of the answer (the textbook method the learner
+is expected to use, same unit), done before you look at the simulated metric. The gate requires
+`rel >= 1.5 x |hand_estimate - sim| / |sim|` (or `abs >= 1.5 x |hand_estimate - sim|`), so a correct hand
+calculation lands inside the tolerance with margin. Typically `{rel: 0.15}`; widen it where the simulation
+includes second-order effects, but if you need more than `{rel: 0.5}` the item is not hand-calculable: pick another.
+Use `{abs: x}` when the value can be near 0. Unit in prelab.md is fixed
 and matches the key. `explain` items have `id, kind: explain, subskill, anchors: {0: .., 1: .., 2: .., 3: ..}`
 where 3 = complete correct reasoning and 0 = wrong/absent.
 ```yaml
@@ -140,6 +147,7 @@ items:
     unit: ohm
     metric: Q_L
     tolerance: {rel: 0.15}
+    hand_estimate: 3.4
 ```
 
 ### `_hidden/oral_key.yaml`
@@ -155,9 +163,23 @@ ladders:
 Exactly one ladder per node.md subskill, 3 hints each. Never include target numbers or component values.
 
 ### Interleaving
-If the input lists open misconceptions or stale subskills, at least one prelab or oral item must target
-one of those subskills (use its exact id). Mark such oral items `interleaved: true` (at least one).
+If the input lists open misconceptions or stale subskills, at least one ORAL item must target one of
+those subskills (its exact id as `subskill`) and have `interleaved: true`: a question that connects this
+build to that earlier skill (e.g. how the stale skill shows up in this circuit). `interleaved: true` is
+allowed ONLY on items whose subskill is one of the given targets; every other item is `interleaved: false`.
 Item subskills may be outside node.md `subskills`; hints only cover node.md `subskills`.
+
+## Honour the option
+Build what the option's title says, with the method it names (an option that says "EM" or "openEMS" is an
+openEMS build, not a lumped stand-in; an option that names SG13G2 uses `pdk: ihp-sg13g2`). Keep the title's
+meaning; you may sharpen the wording. Numeric prelab items must be predictions the simulation can contradict:
+if the simulated metric is just the hand formula evaluated, it is not a prediction (pick another quantity).
+
+## Choosing the PDK
+Pick the process that serves the learner's goals and the option: `ihp-sg13g2` when the goals name IHP
+SG13G2 (HBTs or MOSFETs) and the challenge involves devices; `sky130` for MOSFET circuits otherwise;
+`none` for ideal-element circuits or openEMS passives (no PDK models needed). Prefer the simplest setup
+that still teaches the option's subskills.
 
 ## RFIC specifics
 - Discover PDK models with `list_pdk_models` (filter with `pattern`) and include them with
@@ -189,6 +211,7 @@ Item subskills may be outside node.md `subskills`; hints only cover node.md `sub
 3. `delete_file` every scratch file and simulation output/log in `workspace/` and
    `_hidden/reference_solution/`; then the two hold the same, non-empty, brief-named source files.
 4. Re-read node.md: `run` is a single-line JSON list; `sim_runtime_s: null`; every subskill has a hint ladder.
+5. Compare each numeric item's `hand_estimate` with the reference metric and check the tolerance rule.
 Then reply with one JSON line: {"node": "<dir>", "files": [...], "reference_runtime_s": <float>,
 "notes": "<anything the gate should know>"}.
 
@@ -196,7 +219,9 @@ Then reply with one JSON line: {"node": "<dir>", "files": [...], "reference_runt
 0. All files above present; frontmatter complete and valid; keys well-formed; `prelab.md` mentions every key id;
    no empty or undeclared files (workspace = reference file set, each named in node.md; nothing outside the layout).
 1. Reference checker exits 0 with a §5.2-shaped result. 2. Unmodified starter: checker exits 1.
-3. ≥ 2 numeric prelab items; every `metric` exists in the reference metrics.
-4. Interleaving target covered if any given (and ≥ 1 oral item `interleaved: true`).
+3. ≥ 2 numeric prelab items; every `metric` exists in the reference metrics; each tolerance covers
+   1.5 × the `hand_estimate` error.
+4. Interleaving targets given → ≥ 1 oral item on a target with `interleaved: true`; `interleaved: true`
+   only on target subskills.
 5. `hints.yaml` covers every subskill; `vocab` non-empty.
 6. If the reference run exceeds 600 s, the brief has a long-run warning.
