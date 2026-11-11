@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type NodeView, type TutorMessage } from './api/client'
 import { Badge, Btn, Card, Err, errMsg } from './ui'
+import { Markdown } from './Markdown'
 
 /** Side panel: Socratic tutor (light tier) plus "Show me" (heavy, sees the reference; reduces credit, SPEC §7.4/§8.2). */
 export function Tutor({ node }: { node: NodeView }) {
@@ -57,8 +58,8 @@ export function Tutor({ node }: { node: NodeView }) {
         {msgs.length === 0 && <p className="text-gray-500">Ask a question. The tutor answers with questions and hints, never the answer.</p>}
         {msgs.map((m, i) => (
           <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
-            <div className={`inline-block max-w-full whitespace-pre-wrap rounded-lg px-2 py-1 text-left ${m.role === 'user' ? 'bg-sky-700 text-white' : m.kind === 'show_me' ? 'bg-amber-50' : 'bg-sky-50'}`}>
-              {m.content}
+            <div className={`inline-block max-w-full rounded-lg px-2 py-1 text-left ${m.role === 'user' ? 'bg-sky-700 text-white' : m.kind === 'show_me' ? 'bg-amber-50' : 'bg-sky-50'}`}>
+              {m.role === 'user' ? <span className="whitespace-pre-wrap">{m.content}</span> : <Markdown>{m.content}</Markdown>}
             </div>
           </div>
         ))}

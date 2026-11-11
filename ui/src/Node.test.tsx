@@ -53,6 +53,15 @@ test('prelab: numeric units are fixed, answers are submitted as numbers, then th
   expect(screen.getByText('Open folder')).toBeInTheDocument()
 })
 
+test('prelab markdown renders as formatted questions and inputs stay labelled by id', async () => {
+  routes['GET /nodes/4'] = () => node({ prelab: { ...node().prelab, markdown: '**p1** Estimate $Y_{11}$ in `mS`' } })
+  render(<NodePage id={4} home={() => {}} />)
+  expect(await screen.findByText('p1', { selector: 'strong' })).toBeInTheDocument()
+  expect(document.querySelector('.katex')).not.toBeNull()
+  expect(screen.getByLabelText('p1')).toBeInTheDocument()
+  expect(screen.getByLabelText('p3')).toBeInTheDocument()
+})
+
 test('a locked prelab has no editable inputs', async () => {
   routes['GET /nodes/4'] = () => node({ status: 'oral', prelab: { ...node().prelab, locked: true } })
   routes['GET /nodes/4/oral'] = () => ({ note: 'stub' })

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, REASON_CLASSES, waitJob, type CheckerView, type CheckTest, type DebriefView, type NodeView, type ProofView, type RunRecord } from './api/client'
 import { Badge, Btn, Card, Err, errMsg } from './ui'
 import { Tutor } from './Tutor'
+import { Markdown } from './Markdown'
 
 const STAGES = ['prelab', 'lab', 'proof', 'oral', 'debrief', 'done'] as const
 const WORKING = ['lab', 'proof']
@@ -54,7 +55,7 @@ export function NodePage({ id, home }: { id: number; home: () => void }) {
       {busyMsg && <p className="rounded bg-amber-50 p-2 text-sm text-amber-800">{busyMsg}</p>}
       <div className={working ? 'grid gap-3 lg:grid-cols-[3fr_2fr]' : ''}>
         <div className="space-y-3">
-          <Card title="Brief"><details open={node.status === 'prelab'}><summary className="cursor-pointer text-sm text-sky-800">Show / hide brief</summary><pre className="mt-2 whitespace-pre-wrap font-sans text-sm">{node.brief}</pre></details></Card>
+          <Card title="Brief"><details open={node.status === 'prelab'}><summary className="cursor-pointer text-sm text-sky-800">Show / hide brief</summary><div className="mt-2"><Markdown>{node.brief}</Markdown></div></details></Card>
           {node.status === 'prelab' && <Prelab node={node} onDone={load} />}
           {working && <Lab node={node} reload={load} />}
           {node.status === 'oral' && <Oral node={node} onDone={load} />}
@@ -91,21 +92,31 @@ function Prelab({ node, onDone }: { node: NodeView; onDone: () => void }) {
   return (
     <Card title="Prelab" right={p.locked ? <Badge tone="green">locked</Badge> : <Badge tone="amber">locks on submit</Badge>}>
       <p className="mb-2 text-xs text-gray-600">Answer before the workspace unlocks. Units are fixed. Answers are immutable once submitted and graded only in the debrief.</p>
+      {p.markdown && <Markdown className="mb-3">{p.markdown}</Markdown>}
       <div className="space-y-3">
         {p.items.map((it) => (
-          <label key={it.id} className="block text-sm">
-            <span className="font-mono text-xs text-sky-700">{it.id}</span> {it.prompt}
+          <div key={it.id} className="text-sm">
+            {!p.markdown && (
+              <div className="mb-1">
+                <span className="font-mono text-xs text-sky-700">{it.id}</span>
+                <Markdown>{it.prompt}</Markdown>
+              </div>
+            )}
             {it.kind === 'numeric' ? (
-              <span className="mt-1 flex items-center gap-2">
+              <span className="flex items-center gap-2">
                 <input className="w-40 rounded border px-2 py-1 font-mono" inputMode="decimal" aria-label={it.id} value={vals[it.id] ?? ''}
                        disabled={p.locked} onChange={(e) => setVals({ ...vals, [it.id]: e.target.value })} />
                 <span className="rounded bg-sky-50 px-2 py-1 font-mono text-sky-900" title="fixed unit">{it.unit}</span>
+                {p.markdown && <span className="font-mono text-xs text-sky-700">{it.id}</span>}
               </span>
             ) : (
-              <textarea className="mt-1 block w-full rounded border px-2 py-1" rows={3} aria-label={it.id} value={vals[it.id] ?? ''}
-                        disabled={p.locked} onChange={(e) => setVals({ ...vals, [it.id]: e.target.value })} />
+              <span className="block">
+                {p.markdown && <span className="font-mono text-xs text-sky-700">{it.id}</span>}
+                <textarea className="mt-1 block w-full rounded border px-2 py-1" rows={3} aria-label={it.id} value={vals[it.id] ?? ''}
+                          disabled={p.locked} onChange={(e) => setVals({ ...vals, [it.id]: e.target.value })} />
+              </span>
             )}
-          </label>
+          </div>
         ))}
       </div>
       <Btn primary className="mt-3" disabled={!ready || busy} onClick={submit}>Lock answers and unlock the lab</Btn>
@@ -342,7 +353,7 @@ function Debrief({ node, onDone, home }: { node: NodeView; onDone: () => void; h
           <span className="font-mono text-xs text-sky-700">{g.id}</span> <span className="font-semibold">{g.score}/3</span>{' '}
           <span className="text-xs text-gray-500">{g.subskill}</span>
           {g.quote && <blockquote className="border-l-2 border-sky-300 pl-2 text-gray-700">“{g.quote}”</blockquote>}
-          <p className="text-gray-600">{g.rationale}</p>
+          <Markdown>{g.rationale}</Markdown>
         </div>
       ))}
       <h3 className="mt-3 text-sm font-semibold">Misconceptions</h3>
