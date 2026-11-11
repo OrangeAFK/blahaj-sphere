@@ -1931,6 +1931,12 @@
             "type": "array",
             "title": "Tests"
           },
+          "metrics": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metrics",
+            "default": {}
+          },
           "seconds": {
             "anyOf": [
               {

@@ -49,7 +49,7 @@ class Checker:
         assert (node_dir / work_rel / "rc.sp").is_file()
         v = self.verdicts[min(self.calls, len(self.verdicts) - 1)]
         self.calls += 1
-        res = {"pass": v == "pass", "tests": [{"name": "f3db", "pass": v == "pass", "measured": 1.5, "spec": "<= 9", "unit": "Hz"}], "metrics": {"f3db_hz": 153918.2}, "runtime_s": 1}
+        res = {"pass": v == "pass", "tests": [{"name": "f3db", "pass": v == "pass", "measured": 1.5, "spec": "<= 9", "unit": "Hz"}], "metrics": {"f3db_hz": 153918.2, "extra_db": -3.0}, "runtime_s": 1}
         return {"verdict": v, "exit_code": 0, "seconds": 1.0, "result": res, "problem": None, "stderr_tail": ""}
 
 
@@ -111,12 +111,13 @@ def test_prelab_lock_and_stage_gates(env, tmp_path):
     assert "node 901: prelab -> lab" in log  # auto-commit at the transition
 
 
-def test_lab_checker_hides_spec_and_metrics(env, tmp_path):
+def test_lab_checker_shows_spec_and_hides_only_key_metrics(env, tmp_path):
     lc, _, _ = make(env, tmp_path)
     to_lab(lc)
     lc.start_check(SyncJobs(), 901)
     r = lc.latest_check(901)
-    assert r["tests"] == [{"name": "f3db", "pass": True, "measured": 1.5, "unit": "Hz"}] and "metrics" not in r
+    assert r["tests"] == [{"name": "f3db", "pass": True, "measured": 1.5, "spec": "<= 9", "unit": "Hz"}]
+    assert r["metrics"] == {"extra_db": -3.0}  # f3db_hz is a prelab key metric: hidden; other metrics are shown
     assert not (env / "archive/nodes/0901-rc-lowpass/.checker").exists()
     assert (env / "archive/nodes/0901-rc-lowpass/workspace").iterdir()
 

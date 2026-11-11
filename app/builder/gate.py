@@ -253,22 +253,53 @@ def _declared_sources(node: Path, prelab_items: list[dict], errors: list[str]) -
                 decl = ast.literal_eval(st.value)
             except ValueError:
                 decl = None
-    if not (isinstance(decl, dict) and all(isinstance(k, str) and isinstance(v, str) and v for k, v in decl.items())):
-        errors.append(f'checker.py must declare a literal `{METRIC_SOURCES} = {{"metric": "output file", ...}}` at module level (SPEC §5.2)')
+    if not (isinstance(decl, dict) and all(isinstance(k, str) and _source_ok(v) for k, v in decl.items())):
+        errors.append(f'checker.py must declare a literal `{METRIC_SOURCES} = {{"metric": "raw output file" or ["raw file", ...], ...}}` at '
+                      f"module level (SPEC §5.2): a metric the run writes verbatim names its file, a derived metric lists the raw simulator "
+                      f"output files it is computed from")  # fmt: skip
         return {}
     needed = [it.get("metric") for it in prelab_items if it.get("kind") == "numeric" and isinstance(it.get("metric"), str)]
     missing = [m for m in needed if m not in decl]
     if missing:
         errors.append(f"checker.py {METRIC_SOURCES} lacks numeric prelab metrics {missing}")
     inputs = _files(node / REFERENCE_DIR)
-    for m, f in decl.items():
-        parts = f.replace("\\", "/").split("/")
-        if f.startswith("/") or ".." in parts or ":" in f:
-            errors.append(f"checker.py {METRIC_SOURCES}[{m!r}] = {f!r} must be a path relative to the work dir")
-        elif f in inputs:
-            errors.append(f"checker.py {METRIC_SOURCES}[{m!r}] = {f!r} is a source file the learner edits; a metric must come from "
-                          f"a file the run commands produce (simulator output or post-processing of it)")  # fmt: skip
+    written = _checker_written(tree)
+    for m, files in decl.items():
+        for f in [files] if isinstance(files, str) else files:
+            parts = f.replace("\\", "/").split("/")
+            if f.startswith("/") or ".." in parts or ":" in f:
+                errors.append(f"checker.py {METRIC_SOURCES}[{m!r}] = {f!r} must be a path relative to the work dir")
+            elif f in inputs:
+                errors.append(f"checker.py {METRIC_SOURCES}[{m!r}] = {f!r} is a source file the learner edits; a metric must come from "
+                              f"a file the run commands produce (simulator output)")  # fmt: skip
+            elif f in written:
+                errors.append(f"checker.py {METRIC_SOURCES}[{m!r}] = {f!r} is written by checker.py itself; declare the raw simulator "
+                              f"output file(s) the metric comes from instead (a metric dump written by the checker proves nothing)")  # fmt: skip
     return decl
+
+
+def _source_ok(v) -> bool:
+    return (isinstance(v, str) and bool(v)) or (isinstance(v, list) and bool(v) and all(isinstance(x, str) and x for x in v))
+
+
+_WRITE_CALLS = {"write_text", "write_bytes", "write", "writelines", "dump", "savetxt", "save", "savez", "to_csv", "touch"}
+
+
+def _checker_written(tree: ast.AST) -> set[str]:
+    """String constants that appear in a write-like call of checker.py: `(work / "x").write_text(..)`, `open(work / "x", "w")`,
+    `np.savetxt(work / "x", ..)`. A static heuristic: a path built in a variable first is not seen."""
+    out: set[str] = set()
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        fn = n.func
+        name = fn.attr if isinstance(fn, ast.Attribute) else fn.id if isinstance(fn, ast.Name) else ""
+        is_open_w = name == "open" and any(isinstance(a, ast.Constant) and isinstance(a.value, str) and set(a.value) & set("wax") for a in n.args[1:] + [k.value for k in n.keywords])
+        if name in _WRITE_CALLS or is_open_w:
+            for sub in ast.walk(n):
+                if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                    out.add(sub.value)
+    return out
 
 
 def _named(name: str, text: str) -> bool:
@@ -436,6 +467,11 @@ def _provenance(copy_dir: Path, sources: dict[str, str], metrics: dict, inputs: 
     files only, so any other file was produced by the run commands) and that contains the metric's value."""
     errs = []
     for m, f in sources.items():
+        if isinstance(f, list):  # derived metric: its raw simulator output files must exist after the run; no value to find in them
+            gone = [x for x in f if x not in inputs and not (copy_dir / x).is_file()]
+            if gone:
+                errs.append(f"gate 1 (provenance): metric {m}: declared raw source(s) {gone} were not produced by the reference run")
+            continue
         if m not in metrics or f in inputs:
             continue  # a missing metric is gate 3's error; an input file was already rejected by gate 0
         p = copy_dir / f

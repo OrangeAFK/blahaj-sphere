@@ -36,14 +36,15 @@ def _norm(s: str) -> str:
 
 
 def public_checker(rec: dict | None) -> dict | None:
-    """What the learner and the tutor may see of a checker run: per-test pass/fail and measured values, never the spec
-    thresholds or the metrics (which feed the prelab key)."""
+    """What the learner and the tutor may see of a checker run: per-test pass/fail, measured value and spec threshold, plus the
+    metrics that are not prelab answer keys (`_check` already dropped the key metrics; DECISIONS M6a.1)."""
     if not rec:
         return None
     return {
         "ts": rec.get("ts"), "kind": rec.get("kind"), "verdict": rec.get("verdict"), "passed": rec.get("passed"),
-        "tests": [{"name": t.get("name"), "pass": bool(t.get("pass")), "measured": t.get("measured"), "unit": t.get("unit", "")}
-                  for t in rec.get("tests") or []],  # fmt: skip
+        "tests": [{"name": t.get("name"), "pass": bool(t.get("pass")), "measured": t.get("measured"), "spec": t.get("spec"),
+                   "unit": t.get("unit", "")} for t in rec.get("tests") or []],  # fmt: skip
+        "metrics": rec.get("metrics") or {},
         "seconds": rec.get("seconds"), "detail": rec.get("detail"),
     }
 

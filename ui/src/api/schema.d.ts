@@ -938,6 +938,13 @@ export interface components {
             tests: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Metrics
+             * @default {}
+             */
+            metrics: {
+                [key: string]: unknown;
+            };
             /** Seconds */
             seconds?: number | null;
             /** Detail */

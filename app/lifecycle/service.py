@@ -146,6 +146,7 @@ class Lifecycle:
         shutil.rmtree(ref.path / copy_rel, ignore_errors=True)
         shutil.copytree(ref.path / "workspace", ref.path / copy_rel)
         t0 = time.monotonic()
+        key_metrics = {it.get("metric") for it in self.store.prelab_key(ref) if it.get("metric")}  # prelab answers: never shown
         try:
             run = self.domain.run_checker(ref.path, copy_rel, out_rel, CHECKER_TIMEOUT_S)
         finally:
@@ -158,7 +159,7 @@ class Lifecycle:
         verdict = run.get("verdict")
         return {
             "ts": _now(), "kind": kind, "verdict": verdict, "passed": verdict == "pass", "tests": result.get("tests") or [],
-            "metrics": result.get("metrics") or {}, "seconds": round(time.monotonic() - t0, 1),
+            "metrics": {k: v for k, v in (result.get("metrics") or {}).items() if k not in key_metrics}, "seconds": round(time.monotonic() - t0, 1),
             "detail": ((run.get("problem") or run.get("stderr_tail") or "")[-1500:] or None) if verdict == "error" else None,
         }  # fmt: skip
 

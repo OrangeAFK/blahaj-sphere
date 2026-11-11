@@ -122,7 +122,9 @@ if __name__ == "__main__":
 - `metrics` must include every quantity a numeric prelab item asks about, computed from THIS run's
   simulation output, as finite floats in the prelab item's unit. Provenance: the `run` commands (the
   simulation plus any post-processing script in the workspace) must write every prelab metric, at full
-  precision, to the output file declared in `METRIC_SOURCES`; the checker reads it from there. A source
+  precision, to the output file declared in `METRIC_SOURCES`; the checker reads it from there. If the checker derives a metric from raw simulator
+  output, declare those raw files as a list (`"Z": ["raw_p1.txt", "raw_p2.txt"]`); checker.py must never write a
+  file named in `METRIC_SOURCES` (the gate rejects it). A source
   file the learner edits is never a valid source. Never read a metric back from a design
   parameter the learner edits (e.g. `.param Ls`): the prelab would then be graded against the reference's
   component value, not a simulated result. Emit metrics on the starter too

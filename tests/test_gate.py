@@ -366,3 +366,19 @@ def test_provenance_needs_a_produced_file_that_holds_the_value(node):
         "gate 1 (provenance): metric r_ohm = 1000 does not appear in 'out.txt' (any SI scaling, 0.1%); the checker must take "
         "each metric from the run's output, written there at full precision"]
     assert run_gate(node, FakeRunner(outputs={"out.txt": "f = 0.1539182 MHz, R = 1.000e3"})).passed  # SI-scaled forms count
+
+
+def test_derived_metrics_declare_raw_files_and_checker_written_sources_are_rejected(node):
+    derived = 'METRIC_SOURCES = {"f3db_hz": ["raw1.txt", "raw2.txt"], "r_ohm": ["raw1.txt"]}\n'
+    (node / "checker.py").write_text(derived)
+    raw = {"raw1.txt": "1 2 3\n", "raw2.txt": "4 5 6\n"}  # raw output holds no metric value: fine for a derived metric
+    assert run_gate(node, FakeRunner(outputs=raw)).passed
+    res = run_gate(node, FakeRunner(outputs={"raw1.txt": "x"}))
+    assert any("raw source(s) ['raw2.txt'] were not produced" in e for e in res.errors)
+    (node / "checker.py").write_text(derived + '(work / "raw1.txt").write_text("1")\n')  # the checker writes a declared file
+    res = run_gate(node, FakeRunner(outputs=raw))
+    assert any("'raw1.txt' is written by checker.py itself" in e for e in res.errors)
+    (node / "checker.py").write_text(CHECKER + 'with open(work / "out.txt", "w") as f:\n    f.write("x")\n')
+    assert any("'out.txt' is written by checker.py itself" in e for e in run_gate(node, FakeRunner()).errors)
+    (node / "checker.py").write_text('METRIC_SOURCES = {"f3db_hz": [], "r_ohm": "out.txt"}\n')
+    assert any("must declare a literal `METRIC_SOURCES" in e for e in run_gate(node, FakeRunner()).errors)

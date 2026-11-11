@@ -96,6 +96,7 @@ class CheckerView(BaseModel):
     verdict: str | None = None
     passed: bool | None = None
     tests: list[dict[str, Any]]
+    metrics: dict[str, Any] = {}
     seconds: float | None = None
     detail: str | None = None
 
