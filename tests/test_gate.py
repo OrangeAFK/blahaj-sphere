@@ -51,6 +51,7 @@ ORAL_KEY = {
 HINTS = {"ladders": [{"subskill": s, "hints": ["think", "narrower", "method"]} for s in ("filters.rc_corner", "sparams.reflection_coefficient")]}
 REF = {"pass": True, "tests": [{"name": "f3db", "pass": True, "measured": 1.0, "spec": "x", "unit": "Hz"}],
        "metrics": {"f3db_hz": 153918.2, "r_ohm": 1000.0}, "runtime_s": 3.2}  # fmt: skip
+CHECKER = 'METRIC_SOURCES = {"f3db_hz": "out.txt", "r_ohm": "out.txt"}  # metric -> output file of the run\n'
 STARTER = {"pass": False, "tests": [{"name": "f3db", "pass": False, "measured": 2.0, "spec": "x", "unit": "Hz"}], "metrics": {}, "runtime_s": 3.0}
 
 
@@ -68,7 +69,7 @@ def node(tmp_path):
     (n / "_hidden" / "reference_solution" / "rc.sp").write_text("R1 a b 1k\n")
     (n / "node.md").write_text(NODE_MD, encoding="utf-8")
     (n / "prelab.md").write_text("**p1** corner?\n**p2** R?\n**p3** explain\n", encoding="utf-8")
-    (n / "checker.py").write_text("x")
+    (n / "checker.py").write_text(CHECKER)
     _y(n / "_hidden" / "prelab_key.yaml", PRELAB_KEY)
     _y(n / "_hidden" / "oral_key.yaml", ORAL_KEY)
     _y(n / "hints.yaml", HINTS)
@@ -76,9 +77,10 @@ def node(tmp_path):
 
 
 class FakeRunner:
-    def __init__(self, ref=None, starter=None, ref_exit=0, starter_exit=1, seconds=4.2):
+    def __init__(self, ref=None, starter=None, ref_exit=0, starter_exit=1, seconds=4.2, outputs=None):
         self.ref, self.starter = ref or REF, starter or STARTER
         self.ref_exit, self.starter_exit, self.seconds = ref_exit, starter_exit, seconds
+        self.outputs = outputs  # files the "run" writes into the work dir; default: out.txt with every metric
         self.calls = []
 
     def __call__(self, node_dir, work_rel, out_rel, timeout_s):
@@ -86,6 +88,10 @@ class FakeRunner:
         assert (node_dir / work_rel).is_dir()
         is_ref = work_rel == ".gate/reference"
         result, code = (self.ref, self.ref_exit) if is_ref else (self.starter, self.starter_exit)
+        outputs = self.outputs if self.outputs is not None else (
+            {"out.txt": "".join(f"{k} {v!r}\n" for k, v in result["metrics"].items())} if isinstance(result, dict) and isinstance(result.get("metrics"), dict) else {})
+        for name, text in outputs.items():
+            (node_dir / work_rel / name).write_text(text)
         if result is not None:
             (node_dir / out_rel).parent.mkdir(parents=True, exist_ok=True)
             (node_dir / out_rel).write_text(json.dumps(result))
@@ -323,8 +329,40 @@ def test_cli_uses_domain_runner(node, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["passed"] is False
 
 
-def test_starter_holding_a_key_value_is_a_warning(node):
-    (node / "workspace" / "rc.sp").write_text("R1 a b 1000\n")  # the answer to p2 already sits in the starter
-    (node / "_hidden" / "reference_solution" / "rc.sp").write_text("R1 a b 1k\n")
+@pytest.mark.parametrize("starter_text", ["R1 a b 1000\n", "R1 a b 1.0e3\n", "* corner 153.9182 kHz\nR1 a b 10k\n"])
+def test_starter_holding_an_answer_is_a_hard_fail(node, starter_text):
+    (node / "workspace" / "rc.sp").write_text(starter_text)  # the answer already sits in the starter (any SI scaling)
     res = run_gate(node, FakeRunner())
-    assert res.passed and any("starter files ['workspace/rc.sp'] contain prelab value p2=1000" in w for w in res.warnings), res.warnings
+    assert not res.passed and any(e.startswith("gate 3: the starter contains the answer to") and "workspace/rc.sp" in e for e in res.errors), res.errors
+
+
+def test_trivial_and_merely_close_values_are_not_answers(node):
+    ref = {**REF, "metrics": {"f3db_hz": 153918.2, "r_ohm": 50.0}}  # 50 ohm is a reference value, exempt
+    pk = json.loads(json.dumps(PRELAB_KEY))
+    pk["items"][1]["hand_estimate"] = 50.0
+    _y(node / "_hidden" / "prelab_key.yaml", pk)
+    (node / "workspace" / "rc.sp").write_text("R1 a b 10k\n* port 50 ohm, corner near 150 kHz\n")  # 150 kHz is 2.5 % off: not the answer
+    assert run_gate(node, FakeRunner(ref=ref)).passed
+
+
+def test_metric_sources_must_be_declared_for_numeric_metrics_and_not_be_inputs(node):
+    (node / "checker.py").write_text('METRIC_SOURCES = {"f3db_hz": "rc.sp"}\n')
+    r = FakeRunner()
+    res = run_gate(node, r)
+    assert r.calls == []
+    assert any("lacks numeric prelab metrics ['r_ohm']" in e for e in res.errors)
+    assert any("'rc.sp' is a source file the learner edits" in e for e in res.errors)
+    (node / "checker.py").write_text("import json\nprint(1)\n")
+    assert any("must declare a literal `METRIC_SOURCES" in e for e in run_gate(node, FakeRunner()).errors)
+    (node / "checker.py").write_text('METRIC_SOURCES = {"f3db_hz": "../x.txt", "r_ohm": "/tmp/o"}\n')
+    assert sum("must be a path relative to the work dir" in e for e in run_gate(node, FakeRunner()).errors) == 2
+
+
+def test_provenance_needs_a_produced_file_that_holds_the_value(node):
+    res = run_gate(node, FakeRunner(outputs={}))
+    assert sum("was not produced by the reference run" in e for e in res.errors) == 2
+    res = run_gate(node, FakeRunner(outputs={"out.txt": "f3db_hz 1.539182e5\nr_ohm 990\n"}))
+    assert [e for e in res.errors if "provenance" in e] == [
+        "gate 1 (provenance): metric r_ohm = 1000 does not appear in 'out.txt' (any SI scaling, 0.1%); the checker must take "
+        "each metric from the run's output, written there at full precision"]
+    assert run_gate(node, FakeRunner(outputs={"out.txt": "f = 0.1539182 MHz, R = 1.000e3"})).passed  # SI-scaled forms count

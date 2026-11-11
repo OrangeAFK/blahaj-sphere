@@ -23,6 +23,7 @@ PACKS = {
     "oral_grader": ["items", "score", "quote", "rationale", "misconceptions"],  # §5.7
     "prelab_explain_grader": ["items", "score", "quote", "rationale", "misconceptions"],  # §5.7
     "summarizer": ["## <id> <title>"],  # Markdown entry, no JSON
+    "fidelity_reviewer": ["checks", "method_fidelity", "metrics_simulated", "no_answers_in_starter", "pass", "file", "quote", "reason"],
 }
 
 # SPEC §8.5: editing a grader prompt fails this test on purpose. Log the change in docs/DECISIONS.md with the new hash.
@@ -30,6 +31,7 @@ FROZEN = {
     "diagnostic_grader": "32c6c91aa56ccc498b2f60b872e718855b00a148e562e72355b52dab8afe92e7",
     "oral_grader": "f3e44ebb9b979b08d0483159660961546fc52ad858665b859b129cbb546f566a",
     "prelab_explain_grader": "e508de7e982ae06ec2c7136c7882c500ce615b695fa4871b2371b59d839d3499",
+    "fidelity_reviewer": "8831ef3491c2b89b832abf4841afd5ae7b8eff6c88e7552c547156b40cd7f0fe",  # release-gate judge (M5.1)
 }
 
 
@@ -65,3 +67,12 @@ def test_examiner_never_receives_anchors():
 @pytest.mark.parametrize("name", sorted(FROZEN))
 def test_grader_prompt_is_frozen(name):
     assert hashlib.sha256(_text(name).encode()).hexdigest() == FROZEN[name]
+
+
+BUILDER_MAX_TOKENS = 5000  # §15 exception for domains/rfic/prompts/builder.md (DECISIONS M5.1): a ceiling, not 800
+
+
+def test_builder_prompt_stays_under_its_section_15_exception_ceiling():
+    text = (PROMPTS.parents[1] / "domains" / "rfic" / "prompts" / "builder.md").read_text(encoding="utf-8")
+    assert len(text) / CHARS_PER_TOKEN <= BUILDER_MAX_TOKENS, f"builder.md ~{len(text) / CHARS_PER_TOKEN:.0f} tokens"
+    assert "METRIC_SOURCES" in text and "Fidelity review" in text

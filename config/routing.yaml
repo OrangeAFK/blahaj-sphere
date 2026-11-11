@@ -27,6 +27,11 @@ x-builder: &builder
     - {backend: claude_code, model: claude-sonnet-5-5}
     - {backend: cursor_cli}
 
+# Release-gate fidelity review (DECISIONS M5.1): pinned like a grader, but no grading queue and no failover.
+x-review: &review
+  chain:
+    - {backend: claude_code, model: claude-sonnet-5-5}
+
 x-grading: &grading
   grading: true            # never fails over to a different model; failures go to the grading queue (§3.1)
   chain:
@@ -50,8 +55,12 @@ x-oral: &oral
     - {backend: openrouter, model: "openrouter/free"}
 
 tasks:
-  plan_branches: *heavy
+  plan_branches:          # pinned (DECISIONS M5.1); was the x-heavy default model
+    chain:
+      - {backend: claude_code, model: claude-sonnet-5-5}
+      - {backend: cursor_cli}
   build_challenge: *builder
+  review_build: *review
   draft_framework: *heavy
   rescope: *heavy
   show_me: *heavy          # SPEC 7.4: heavy model with _hidden/ access

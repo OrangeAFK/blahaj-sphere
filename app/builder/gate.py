@@ -8,6 +8,7 @@ CLI: `uv run python -m app.builder.gate <node_dir> [--context ctx.json] [--json]
 """
 
 import argparse
+import ast
 import json
 import math
 import re
@@ -55,6 +56,13 @@ ANCHOR_KEYS = {0, 1, 2, 3}
 _RUN_LINE = re.compile(r"^run:[ \t]*(.*?)[ \t]*(?:#.*)?$", re.M)
 _LONG_RUN = re.compile(r"long[- ]run", re.I)
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+METRIC_SOURCES = "METRIC_SOURCES"  # checker.py: {metric: output file the run writes it to} (DECISIONS M5.1, SPEC §5.2)
+SI_SCALES = tuple(10.0 ** (3 * k) for k in range(-5, 6))  # 53 pH may be written as 5.3e-11 or 53
+SAME_REL = 1e-3  # "contains the value": printed precision
+# A number token in a file; digits inside identifiers (R1, C2, port_2) are not numbers.
+_NUM_TOKEN = re.compile(r"(?<![A-Za-z_\d.])-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+TRIVIAL_VALUES = {25.0, 50.0, 75.0, 100.0}  # reference impedances etc. may appear anywhere
+SOURCE_MAX_BYTES = 20_000_000
 
 
 @dataclass
@@ -81,6 +89,7 @@ class GateResult:
     sim_runtime_s: int | None = None
     checker_runtime_s: float | None = None
     ref_metrics: dict = field(default_factory=dict)
+    metric_sources: dict = field(default_factory=dict)  # checker.py METRIC_SOURCES (verified against the reference run)
     reference: dict | None = None  # raw runner output (minus the result), for logs
     starter: dict | None = None
 
@@ -216,12 +225,50 @@ def _structure(node: Path, errors: list[str], warnings: list[str]) -> dict | Non
             errors.append(f"{where}: `probes` must be a non-empty list")
         _check_anchors(it, where, errors)
 
+    sources = _declared_sources(node, prelab_items, errors)
+
     if (node / "prelab.md").is_file():
         prelab_text = (node / "prelab.md").read_text(encoding="utf-8")
         for it in prelab_items:
             if isinstance(it.get("id"), str) and not re.search(rf"\b{re.escape(it['id'])}\b", prelab_text):
                 errors.append(f"prelab.md does not mention item {it['id']} from prelab_key.yaml")
-    return {"fm": fm, "body": body, "subskills": subskills, "pk": pk, "prelab": prelab_items, "oral": oral_items, "hints": hints}
+    return {"fm": fm, "body": body, "subskills": subskills, "pk": pk, "prelab": prelab_items, "oral": oral_items, "hints": hints,
+            "sources": sources}  # fmt: skip
+
+
+def _declared_sources(node: Path, prelab_items: list[dict], errors: list[str]) -> dict[str, str]:
+    """checker.py must declare `METRIC_SOURCES = {metric: file}` (a literal dict) for every numeric prelab metric: the
+    output file, relative to the work dir, that the run commands write the value to. Inputs (source files) do not count."""
+    if not (node / "checker.py").is_file():
+        return {}
+    try:
+        tree = ast.parse((node / "checker.py").read_text(encoding="utf-8"))
+    except (SyntaxError, ValueError) as e:
+        errors.append(f"checker.py does not parse: {e}")
+        return {}
+    decl = None
+    for st in tree.body:
+        if isinstance(st, ast.Assign) and any(isinstance(tg, ast.Name) and tg.id == METRIC_SOURCES for tg in st.targets):
+            try:
+                decl = ast.literal_eval(st.value)
+            except ValueError:
+                decl = None
+    if not (isinstance(decl, dict) and all(isinstance(k, str) and isinstance(v, str) and v for k, v in decl.items())):
+        errors.append(f'checker.py must declare a literal `{METRIC_SOURCES} = {{"metric": "output file", ...}}` at module level (SPEC §5.2)')
+        return {}
+    needed = [it.get("metric") for it in prelab_items if it.get("kind") == "numeric" and isinstance(it.get("metric"), str)]
+    missing = [m for m in needed if m not in decl]
+    if missing:
+        errors.append(f"checker.py {METRIC_SOURCES} lacks numeric prelab metrics {missing}")
+    inputs = _files(node / REFERENCE_DIR)
+    for m, f in decl.items():
+        parts = f.replace("\\", "/").split("/")
+        if f.startswith("/") or ".." in parts or ":" in f:
+            errors.append(f"checker.py {METRIC_SOURCES}[{m!r}] = {f!r} must be a path relative to the work dir")
+        elif f in inputs:
+            errors.append(f"checker.py {METRIC_SOURCES}[{m!r}] = {f!r} is a source file the learner edits; a metric must come from "
+                          f"a file the run commands produce (simulator output or post-processing of it)")  # fmt: skip
+    return decl
 
 
 def _named(name: str, text: str) -> bool:
@@ -335,21 +382,33 @@ def _failing_tests(result) -> str:
     return "; ".join(f"{t.get('name')}: measured {t.get('measured')} {t.get('unit', '')} vs spec {t.get('spec')}" for t in fails[:6])
 
 
-def _run_copy(node: Path, runner: CheckerRunner, src: str, copy: str, out_rel: str) -> dict:
-    """Run the checker on a throwaway copy of `src`, so gate runs never add outputs to the node."""
+def _run_copy(node: Path, runner: CheckerRunner, src: str, copy: str, out_rel: str, inspect=None) -> dict:
+    """Run the checker on a throwaway copy of `src`, so gate runs never add outputs to the node.
+    `inspect(copy_dir, run)` sees the copy (with the run's outputs) before it is deleted."""
     shutil.rmtree(node / copy, ignore_errors=True)
     try:
         shutil.copytree(node / src, node / copy)
-        return runner(node, copy, out_rel, CHECKER_TIMEOUT_S)
+        run = runner(node, copy, out_rel, CHECKER_TIMEOUT_S)
+        if inspect is not None:
+            inspect(node / copy, run)
+        return run
     finally:
         shutil.rmtree(node / copy, ignore_errors=True)
         if (node / ".gate").is_dir() and not any((node / ".gate").iterdir()):
             (node / ".gate").rmdir()
 
 
-def _run_reference(node: Path, runner: CheckerRunner, res: GateResult) -> dict | None:
+def _run_reference(node: Path, runner: CheckerRunner, res: GateResult, sources: dict[str, str] | None = None) -> dict | None:
     (node / REF_RESULT).unlink(missing_ok=True)
-    run = _run_copy(node, runner, REFERENCE_DIR, REFERENCE_COPY, REF_RESULT)
+    inputs = _files(node / REFERENCE_DIR)
+    prov: list[str] = []
+
+    def inspect(copy_dir: Path, run: dict) -> None:
+        r = run.get("result")
+        if run.get("verdict") == "pass" and isinstance(r, dict) and isinstance(r.get("metrics"), dict):
+            prov.extend(_provenance(copy_dir, sources or {}, r["metrics"], inputs))
+
+    run = _run_copy(node, runner, REFERENCE_DIR, REFERENCE_COPY, REF_RESULT, inspect)
     res.reference = _brief(run)
     result = run.get("result")
     detail = run.get("problem") or (run.get("stderr_tail") or "")[-1500:]
@@ -368,7 +427,26 @@ def _run_reference(node: Path, runner: CheckerRunner, res: GateResult) -> dict |
     res.checker_runtime_s = result["runtime_s"]
     res.ref_metrics = dict(result["metrics"])
     set_frontmatter_scalar(node / "node.md", "sim_runtime_s", res.sim_runtime_s)
+    res.errors.extend(prov)
     return result
+
+
+def _provenance(copy_dir: Path, sources: dict[str, str], metrics: dict, inputs: set[str]) -> list[str]:
+    """Every declared metric must be in a file that did not exist before the run (the copy starts with the source
+    files only, so any other file was produced by the run commands) and that contains the metric's value."""
+    errs = []
+    for m, f in sources.items():
+        if m not in metrics or f in inputs:
+            continue  # a missing metric is gate 3's error; an input file was already rejected by gate 0
+        p = copy_dir / f
+        if not p.is_file():
+            errs.append(f"gate 1 (provenance): metric {m}: declared source {f!r} was not produced by the reference run")
+            continue
+        v = float(metrics[m])
+        if not any(_same_value(n, v, tok) for n, tok in _number_tokens(_text_or_empty(p, SOURCE_MAX_BYTES))):
+            errs.append(f"gate 1 (provenance): metric {m} = {v:g} does not appear in {f!r} (any SI scaling, {SAME_REL:.1%}); "
+                        f"the checker must take each metric from the run's output, written there at full precision")  # fmt: skip
+    return errs
 
 
 def _run_starter(node: Path, runner: CheckerRunner, res: GateResult) -> None:
@@ -402,30 +480,57 @@ def _prelab_values(node: Path, s: dict, res: GateResult, metrics: dict | None) -
         _tolerance_margin(it, res)
     with open(node / PRELAB_KEY, "w", encoding="utf-8", newline="\n") as f:
         yaml.safe_dump(s["pk"], f, sort_keys=False, allow_unicode=True)
-    # Heuristic: a number in the hints or the starter files within 1 % of a key value (ignoring tiny integers like 2 or 3).
-    # A starter that already holds the answer usually means the metric is read back from a design file, not simulated.
+    # Hints: heuristic warning (a number within 1 % of a key value, ignoring tiny integers like 2 or 3).
     hint_nums = _numbers(s.get("_hint_text", ""))
-    starter_nums = {p.relative_to(node).as_posix(): _numbers(_text_or_empty(p)) for p in sorted((node / "workspace").rglob("*")) if p.is_file()}
+    # Starter: a hard fail (DECISIONS M5.1). The learner must not be handed an answer, and a starter holding it usually
+    # means the metric is read back from a design file. Trivial values (small integers, 25/50/75/100) are exempt.
+    starter = {p.relative_to(node).as_posix(): _number_tokens(_text_or_empty(p)) for p in sorted((node / "workspace").rglob("*")) if p.is_file()}
     for it in numeric:
         v = float(it["value"])
-        if v == 0 or (v.is_integer() and abs(v) < 10):
-            continue
-        if any(abs(n - v) <= 0.01 * abs(v) for n in hint_nums):
+        if v != 0 and not (v.is_integer() and abs(v) < 10) and any(abs(n - v) <= 0.01 * abs(v) for n in hint_nums):
             res.warnings.append(f"hints.yaml may leak prelab value {it['id']}={v:g}")
-        files = [f for f, nums in starter_nums.items() if any(abs(n - v) <= 0.01 * abs(v) for n in nums)]
-        if files:
-            res.warnings.append(f"starter files {files} contain prelab value {it['id']}={v:g}: is metric {it['metric']} simulated, "
-                                f"or read back from a design file the learner edits?")  # fmt: skip
+        if _trivial(v):
+            continue
+        hits = [f"{f} ({tok!r})" for f, toks in starter.items() for n, tok in toks if _same_value(n, v, tok)]
+        if hits:
+            res.errors.append(f"gate 3: the starter contains the answer to {it['id']} ({it['metric']} = {v:g} {it.get('unit', '')}) in "
+                              f"{hits[:5]}: make the starter value wrong, and never read a metric back from a design input")  # fmt: skip
+
+
+def _number_tokens(text: str) -> list[tuple[float, str]]:
+    return [(float(m.group(0)), m.group(0)) for m in _NUM_TOKEN.finditer(text)]
+
+
+def _sig_digits(tok: str) -> int:
+    mantissa = re.split(r"[eE]", tok.lstrip("-"))[0].replace(".", "").lstrip("0")
+    return len(mantissa.rstrip("0")) if "." not in tok else len(mantissa)
+
+
+def _same_value(n: float, v: float, tok: str | None = None) -> bool:
+    """n equals v up to printed precision, allowing an SI prefix change (53 pH written as 5.3e-11 or 53). A prefix change
+    only counts for tokens with >= 2 significant digits, so a bare "1" or "2" never matches 1000 or 2e-12."""
+    if v == 0:
+        return n == 0
+    if abs(n - v) <= SAME_REL * abs(v):
+        return True
+    if tok is not None and _sig_digits(tok) < 2:
+        return False
+    return any(abs(n * s - v) <= SAME_REL * abs(v) for s in SI_SCALES)
+
+
+def _trivial(v: float) -> bool:
+    return v.is_integer() and (abs(v) <= 12 or abs(v) in TRIVIAL_VALUES)
 
 
 def _numbers(text: str) -> list[float]:
     return [n for n in map(float, _NUMBER.findall(text)) if not (n.is_integer() and abs(n) < 10)]
 
 
-def _text_or_empty(p: Path) -> str:
+def _text_or_empty(p: Path, max_bytes: int = 2_000_000) -> str:
     try:
-        return p.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        with open(p, "rb") as f:
+            return f.read(max_bytes).decode("utf-8", errors="replace")
+    except OSError:
         return ""
 
 
@@ -465,9 +570,10 @@ def run_gate(node_dir: Path, runner: CheckerRunner, ctx: GateContext | None = No
     if s is None or res.errors:
         res.errors.insert(0, "gate 0 (structure) failed; simulations not run")
         return res
+    res.metric_sources = dict(s.get("sources") or {})
     _interleaving(s, ctx, res.errors)
     _hints_vocab(s, res.errors, res.warnings)
-    result = _run_reference(node, runner, res)
+    result = _run_reference(node, runner, res, s.get("sources"))
     _run_starter(node, runner, res)
     _prelab_values(node, s, res, result["metrics"] if result else None)
     if res.sim_runtime_s is not None and res.sim_runtime_s > LONG_RUN_S and not _LONG_RUN.search(s["body"]):

@@ -19,7 +19,8 @@ import yaml
 
 from app.builder.context import interleaving_context, learner_state
 from app.builder.gate import GateContext, GateResult, run_gate
-from app.builder.nodefile import NodeFileError, read_node_md
+from app.builder.nodefile import NodeFileError, read_node_md, set_frontmatter_scalar
+from app.builder.review import ReviewUnavailable, run_review
 from app.datastore.cache import rebuild_db
 from app.datastore.layout import DataLayout
 from app.domains import Domain
@@ -168,6 +169,22 @@ class BuildService:
             if mismatch:
                 res.errors += mismatch
                 res.passed = False
+            if res.passed:  # gate 7: the LLM fidelity review runs only on a node every code gate accepted
+                log(f"attempt {n}: fidelity review")
+                try:
+                    rv = run_review(self.router, plan.node_dir, plan.option, res.ref_metrics, res.metric_sources,
+                                    self.domain.name, plan.node_id)  # fmt: skip
+                except ReviewUnavailable as e:
+                    att["gate"] = res.to_dict()
+                    record["attempts"].append(att)
+                    record["aborted"] = {"when": f"fidelity review of attempt {n}", "problems": [str(e)]}
+                    self._move_aside(plan, record)
+                    raise BuildError(503, f"{e}; build aborted (try again later)") from e
+                att["review"] = rv.to_dict()
+                res.warnings += rv.warnings
+                if not rv.passed:
+                    res.errors += rv.errors
+                    res.passed = False
             att["gate_wall_s"] = round(time.monotonic() - t1, 1)
             att["gate"] = res.to_dict()
             record["attempts"].append(att)
@@ -213,6 +230,14 @@ class BuildService:
         log(f"toolchain unavailable {when}: {bad}")
         self._move_aside(plan, record)
         raise BuildError(503, f"toolchain unavailable {when}, build aborted (fix it and build again): " + "; ".join(bad))
+
+    def abandon(self, node_dir: str) -> None:
+        """Mark a released node `abandoned` (SPEC §5.1 status), e.g. when it is rebuilt under stricter rules. Never deleted."""
+        md = self.layout.nodes_dir / node_dir / "node.md"
+        if not md.is_file():
+            raise BuildError(404, f"no node {node_dir}")
+        set_frontmatter_scalar(md, "status", "abandoned")
+        rebuild_db(self.layout.root)
 
     def _option_mismatch(self, plan: BuildPlan) -> list[str]:
         """node.md must carry the allocated id/slug and the chosen option unchanged (the gate itself cannot know them)."""

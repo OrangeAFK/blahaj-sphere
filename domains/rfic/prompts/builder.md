@@ -83,6 +83,9 @@ from pathlib import Path
 
 NODE = Path(__file__).resolve().parent
 OUTPUTS = ["out.txt"]          # files the run produces; deleted before running
+# REQUIRED, a literal dict: each prelab metric -> the output file (relative to the work dir) that the run
+# commands write it to. The gate checks the file was produced by the run and contains the value.
+METRIC_SOURCES = {"Q_L": "out.txt"}
 
 def run_commands():
     m = re.search(r"^run:\s*(\[.*\])\s*$", (NODE / "node.md").read_text(), re.M)
@@ -117,7 +120,10 @@ if __name__ == "__main__":
     main()
 ```
 - `metrics` must include every quantity a numeric prelab item asks about, computed from THIS run's
-  simulation output, as finite floats in the prelab item's unit. Never read a metric back from a design
+  simulation output, as finite floats in the prelab item's unit. Provenance: the `run` commands (the
+  simulation plus any post-processing script in the workspace) must write every prelab metric, at full
+  precision, to the output file declared in `METRIC_SOURCES`; the checker reads it from there. A source
+  file the learner edits is never a valid source. Never read a metric back from a design
   parameter the learner edits (e.g. `.param Ls`): the prelab would then be graded against the reference's
   component value, not a simulated result. Emit metrics on the starter too
   where they can be computed.
@@ -171,7 +177,8 @@ Item subskills may be outside node.md `subskills`; hints only cover node.md `sub
 
 ## Honour the option
 Build what the option's title says, with the method it names (an option that says "EM" or "openEMS" is an
-openEMS build, not a lumped stand-in; an option that names SG13G2 uses `pdk: ihp-sg13g2`). Keep the title's
+openEMS build, not a lumped stand-in; an option that names SG13G2 devices uses `pdk: ihp-sg13g2`, and SG13G2
+passives in EM use the SG13G2 metal stack, see below). Keep the title's
 meaning; you may sharpen the wording. Numeric prelab items must be predictions the simulation can contradict:
 if the simulated metric is just the hand formula evaluated, it is not a prediction (pick another quantity).
 
@@ -200,7 +207,15 @@ that still teaches the option's subskills.
   `Path(__file__).resolve().parent`. Use a coarse mesh and end criterion -40 dB (`EndCriteria=1e-4`)
   so a run takes < 5 min. Write S-params as Touchstone (`.s2p`) next to the script; `parse_touchstone`
   reads them. Delete/overwrite the sim dir each run.
+- SG13G2 in openEMS: the PDK ships an openEMS workflow at
+  `/foss/pdks/ihp-sg13g2/libs.tech/openems/openems_ihp_sg13g2/workflow/`: `SG13G2.xml` (stack-up: layer
+  z-ranges in um, conductivities, dielectrics) and examples `run_inductor_2port.py`, `run_line_full2port.py`,
+  `run_line_GSG_complex.py`. Take metal heights, thicknesses and conductivities from `SG13G2.xml` (e.g. TopMetal2,
+  SiO2, substrate) by printing excerpts with a short `run_python` script (then delete it); build the geometry
+  directly with CSXCAD so the node does not depend on the GDS workflow.
 - Keep the reference run well under 10 min. Under 2 min is ideal.
+- Write `node.md`, `prelab.md`, `checker.py` and the starter early (refine them later): if your session ends
+  while you tune a slow simulation, the next attempt starts from files, not from nothing.
 - Use `run_ngspice` / `run_openems` / `run_python` while developing. Files under
   `_hidden/reference_solution/` run with cwd = that directory; all others run with cwd = `workspace/`.
   Use relative output paths in netlists/scripts so each copy writes next to itself.
@@ -218,10 +233,15 @@ Then reply with one JSON line: {"node": "<dir>", "files": [...], "reference_runt
 ## Gate (enforced by code after you finish)
 0. All files above present; frontmatter complete and valid; keys well-formed; `prelab.md` mentions every key id;
    no empty or undeclared files (workspace = reference file set, each named in node.md; nothing outside the layout).
-1. Reference checker exits 0 with a §5.2-shaped result. 2. Unmodified starter: checker exits 1.
+1. Reference checker exits 0 with a §5.2-shaped result; each `METRIC_SOURCES` file was produced by the run
+   and contains its metric's value. 2. Unmodified starter: checker exits 1.
 3. ≥ 2 numeric prelab items; every `metric` exists in the reference metrics; each tolerance covers
-   1.5 × the `hand_estimate` error.
+   1.5 × the `hand_estimate` error; no prelab answer appears in any starter file (small integers and
+   25/50/75/100 exempt).
 4. Interleaving targets given → ≥ 1 oral item on a target with `interleaved: true`; `interleaved: true`
    only on target subskills.
 5. `hints.yaml` covers every subskill; `vocab` non-empty.
 6. If the reference run exceeds 600 s, the brief has a long-run warning.
+7. Fidelity review (a reviewer model reads the option and every file, quoting evidence): the node uses the
+   option's method and process; every metric is simulated, not read back or a formula stand-in; the starter
+   holds no answers or reference values.

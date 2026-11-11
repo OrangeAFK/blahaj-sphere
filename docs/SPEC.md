@@ -157,6 +157,7 @@ references: [{title: "...", url: "..."}, {book_id: "razavi-rf", page: 112}]
  "runtime_s": 95.3}
 ```
 `metrics` feed prelab numeric keys (§5.3).
+**Metric provenance (M5.1):** `checker.py` declares a module-level literal `METRIC_SOURCES = {"<metric>": "<output file>"}` (path relative to the work dir) for every numeric prelab metric; the gate verifies each file was produced by the reference run (not a source file) and contains the value.
 
 ### 5.3 `prelab.md` + `_hidden/prelab_key.yaml`
 `prelab.md`: numbered items with id, prompt, and for numeric items a **fixed unit** (input field locked to it).

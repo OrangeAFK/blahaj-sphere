@@ -24,7 +24,7 @@ from app.llm.types import Result
 from app.main import create_app
 from app.onboarding.framework import Framework, FrameworkStore
 from app.planner.service import Planner, PlannerError, validate_options
-from tests.test_gate import NODE_MD, ORAL_KEY, PRELAB_KEY, FakeRunner
+from tests.test_gate import CHECKER, NODE_MD, ORAL_KEY, PRELAB_KEY, FakeRunner
 from tests.test_onboarding import ALL, Scripted, template_framework
 
 OPTION = {"title": "Set an RC low-pass corner", "why_now": "w", "kind": "challenge", "domain": "filters",
@@ -198,7 +198,7 @@ class FakeBuilder:
         hints = {"ladders": [{"subskill": s, "hints": ["think", "narrower", "method"]} for s in o["subskills"]]}
         (n / "node.md").write_text(md, encoding="utf-8")
         (n / "prelab.md").write_text("**p1** corner?\n**p2** R?\n**p3** explain\n", encoding="utf-8")
-        (n / "checker.py").write_text("x")
+        (n / "checker.py").write_text(CHECKER)
         ok = json.loads(json.dumps(ORAL_KEY))
         ok["items"].append({"id": "o3", "subskill": self.interleave, "tier": 1, "question": "link?",
                             "anchors": {0: "a", 1: "b", 2: "c", 3: "d"}, "probes": ["p"], "interleaved": True})  # fmt: skip
@@ -228,8 +228,14 @@ def fake_domain(tmp_path, runner=None) -> tuple[Domain, dict]:
     return Domain(name="fake", image="x", image_size_gb=0, run_checker=runner or FakeRunner(), builder=hooks), state
 
 
-def _build_router(tmp_path, fb) -> tuple[Router, Scripted]:
-    ad = Agent({"build_challenge": [fb, fb, fb]})
+def review(fail: str | None = None, quote: str = "kind: challenge") -> dict:
+    """A fidelity-review reply; `fail` names the check that fails."""
+    return {"checks": [{"id": i, "pass": i != fail, "file": "node.md", "quote": quote, "reason": f"{i} reason"}
+                       for i in ("method_fidelity", "metrics_simulated", "no_answers_in_starter")]}  # fmt: skip
+
+
+def _build_router(tmp_path, fb, reviews=None) -> tuple[Router, Scripted]:
+    ad = Agent({"build_challenge": [fb, fb, fb], "review_build": reviews if reviews is not None else [review()] * 3})
     return _router(tmp_path, ad), ad
 
 
@@ -324,7 +330,7 @@ def test_api_planner_then_build_job(data, tmp_path, monkeypatch):
     monkeypatch.setenv("BLAHAJ_DATA_DIR", str(data))
     dom, state = fake_domain(tmp_path)
     ad = Agent({"plan_branches": [{"options": [_opt(), _opt(domain="noise", subskills=["noise.sources"], tier=3)]}],
-                "build_challenge": [FakeBuilder(state)]})
+                "build_challenge": [FakeBuilder(state)], "review_build": [review()]})
     app = create_app()
     app.state.domain = dom
     app.state.llm_router = _router(tmp_path, ad)
@@ -388,3 +394,77 @@ def test_planner_unescapes_html_in_option_text():
     fw = Framework.model_validate(template_framework())
     clean, errors = validate_options({"options": [_opt(title="Stabilize to K &gt; 1"), _opt()]}, fw, {"matching": {"tier": 3}})
     assert not errors and clean[0]["title"] == "Stabilize to K > 1"
+
+
+# ---- gate 7: fidelity review ------------------------------------------------------------------------
+
+
+def test_fidelity_review_runs_last_and_its_failure_is_fed_back(data, tmp_path):
+    dom, state = fake_domain(tmp_path)
+    fb = FakeBuilder(state)
+    bad = review(fail="metrics_simulated", quote="R1 a b 1k")  # quoted from the reference netlist
+    bad["checks"][1]["file"] = "_hidden/reference_solution/rc.sp"
+    router, ad = _build_router(tmp_path, fb, reviews=[bad, review()])
+    svc = BuildService(data, router, dom)
+    rec = svc.run(svc.prepare(OPTION))
+    assert rec["passed"] and len(rec["attempts"]) == 2
+    a1 = rec["attempts"][0]
+    assert not a1["review"]["passed"] and a1["review"]["checks"][1]["quote_verified"]
+    assert 'gate 7 (fidelity review) metrics_simulated: metrics_simulated reason [_hidden/reference_solution/rc.sp: "R1 a b 1k"]' in fb.prompts[1]
+    req = next(r for r in ad.requests if r.task_type == "review_build")
+    assert not req.tools and not req.mcp_config and "audit one generated fake challenge" in req.messages[0]["content"]
+    sent = json.loads(req.messages[1]["content"])
+    assert sent["option"] == OPTION and {"node.md", "checker.py", "workspace/rc.sp", "_hidden/reference_solution/rc.sp"} <= set(sent["files"])
+    assert sent["metric_sources"] == {"f3db_hz": "out.txt", "r_ohm": "out.txt"} and sent["metrics"]["r_ohm"] == 1000.0
+
+
+def test_fidelity_review_is_skipped_when_code_gates_fail(data, tmp_path):
+    dom, state = fake_domain(tmp_path)
+    router, ad = _build_router(tmp_path, FakeBuilder(state, broken=1))
+    svc = BuildService(data, router, dom)
+    assert svc.run(svc.prepare(OPTION))["passed"]
+    assert [r.task_type for r in ad.requests] == ["build_challenge", "build_challenge", "review_build"]
+
+
+def test_unverifiable_quotes(data, tmp_path):
+    dom, state = fake_domain(tmp_path)
+    router, _ = _build_router(tmp_path, FakeBuilder(state), reviews=[review(quote="not in any file")])
+    svc = BuildService(data, router, dom, max_retries=0)
+    rec = svc.run(svc.prepare(OPTION))
+    assert rec["passed"] and len(rec["attempts"][0]["review"]["warnings"]) == 3  # passing quotes not verbatim: warnings
+    dom, state = fake_domain(tmp_path)
+    router, _ = _build_router(tmp_path, FakeBuilder(state), reviews=[review(fail="method_fidelity", quote="invented")])
+    svc = BuildService(data, router, dom, max_retries=0)
+    with pytest.raises(BuildError) as e:
+        svc.run(svc.prepare(OPTION))
+    assert "quote not found verbatim; the verdict stands" in e.value.message
+
+
+def test_review_unavailable_or_malformed_aborts_without_burning_retries(data, tmp_path):
+    from app.llm.types import LLMError
+
+    dom, state = fake_domain(tmp_path)
+    router, ad = _build_router(tmp_path, FakeBuilder(state), reviews=[{"checks": []}, {"verdict": "ok"}])
+    svc = BuildService(data, router, dom)
+    plan = svc.prepare(OPTION)
+    with pytest.raises(BuildError) as e:
+        svc.run(plan)
+    assert e.value.status == 503 and "unusable output twice" in e.value.message and not plan.node_dir.exists()
+    assert [r.task_type for r in ad.requests] == ["build_challenge", "review_build", "review_build"]
+    router, _ = _build_router(tmp_path, FakeBuilder(state), reviews=[LLMError("claude down")])
+    with pytest.raises(BuildError) as e:
+        svc2 = BuildService(data, router, dom)
+        svc2.run(svc2.prepare(OPTION))
+    assert e.value.status == 503 and "claude down" in e.value.message
+
+
+def test_abandon_marks_status_and_reindexes(data, tmp_path):
+    dom, state = fake_domain(tmp_path)
+    router, _ = _build_router(tmp_path, FakeBuilder(state))
+    svc = BuildService(data, router, dom)
+    plan = svc.prepare(OPTION)
+    svc.run(plan)
+    svc.abandon(plan.name)
+    with closing(sqlite3.connect(DataLayout(data).cache_path)) as c:
+        assert c.execute("SELECT status FROM nodes WHERE id = ?", (plan.node_id,)).fetchone() == ("abandoned",)
+    assert "status: abandoned" in (plan.node_dir / "node.md").read_text(encoding="utf-8")
