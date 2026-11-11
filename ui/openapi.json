@@ -80,7 +80,7 @@
     "/api/llm/usage": {
       "get": {
         "summary": "Get Llm Usage",
-        "description": "Today's per-model request counts and the number of grades awaiting retry.",
+        "description": "Today's per-model request counts with their caps, per-backend totals with caps and remaining, and grades awaiting retry.",
         "operationId": "getLlmUsage",
         "responses": {
           "200": {
@@ -805,6 +805,20 @@
               "type": "integer",
               "title": "Node Id"
             }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "workspace",
+                "backup"
+              ],
+              "type": "string",
+              "default": "workspace",
+              "title": "Target"
+            }
           }
         ],
         "responses": {
@@ -817,6 +831,81 @@
                   "additionalProperties": true,
                   "title": "Response Opennodefolder"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/run": {
+      "post": {
+        "summary": "Run Simulation",
+        "description": "Run the node's `run` commands in the workspace as a job; output streams to the job log.",
+        "operationId": "runNodeSimulation",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Get Run",
+        "operationId": "getNodeRun",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -1504,6 +1593,29 @@
         }
       }
     },
+    "/api/scores": {
+      "get": {
+        "summary": "Get Scores",
+        "description": "Per-domain tier and mastery from events.jsonl (the cache's scores table).",
+        "operationId": "getScores",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DomainScoreView"
+                  },
+                  "type": "array",
+                  "title": "Response Getscores"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rfic/container": {
       "get": {
         "summary": "Container Status",
@@ -2086,6 +2198,52 @@
           "domains"
         ],
         "title": "DiagnosticView"
+      },
+      "DomainScoreView": {
+        "properties": {
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "mastery": {
+            "type": "number",
+            "title": "Mastery"
+          },
+          "n_window": {
+            "type": "integer",
+            "title": "N Window"
+          },
+          "unlocked": {
+            "type": "boolean",
+            "title": "Unlocked"
+          },
+          "subskills_evidenced": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Subskills Evidenced"
+          }
+        },
+        "type": "object",
+        "required": [
+          "domain",
+          "name",
+          "tier",
+          "mastery",
+          "n_window",
+          "unlocked",
+          "subskills_evidenced"
+        ],
+        "title": "DomainScoreView"
       },
       "Framework": {
         "properties": {
@@ -3016,6 +3174,17 @@
           "node_id": {
             "type": "integer",
             "title": "Node Id"
+          },
+          "backup": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup"
           }
         },
         "type": "object",

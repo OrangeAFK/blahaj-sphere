@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type BranchOptionT, type MasteryDelta, type NodeSummary, type PlannerOptions } from './api/client'
+import { api, type BranchOptionT, type DomainScore, type NodeSummary, type PlannerOptions } from './api/client'
 import { Badge, Btn, Card, Err, errMsg } from './ui'
 
 const DONE = ['done', 'rescoped', 'abandoned']
@@ -14,22 +14,9 @@ const ACTION: Record<string, string> = {
 /** The node the learner is working on: the newest one that is not finished. */
 export const currentNode = (nodes: NodeSummary[]) => [...nodes].filter((n) => !DONE.includes(n.status)).sort((a, b) => b.id - a.id)[0]
 
-/** Mastery per domain = `mastery_after` of the latest debrief that touched it (no scores endpoint exists; DECISIONS M6b). */
-async function loadMastery(nodes: NodeSummary[]): Promise<Record<string, MasteryDelta>> {
-  const out: Record<string, MasteryDelta> = {}
-  for (const n of [...nodes].filter((n) => n.status === 'done' || n.status === 'debrief').sort((a, b) => a.id - b.id)) {
-    try {
-      for (const m of (await api.debrief(n.id)).mastery) out[m.domain] = m
-    } catch {
-      /* a node without a debrief yet */
-    }
-  }
-  return out
-}
-
 export function Home({ open }: { open: (id: number) => void }) {
   const [nodes, setNodes] = useState<NodeSummary[] | null>(null)
-  const [mastery, setMastery] = useState<Record<string, MasteryDelta>>({})
+  const [mastery, setMastery] = useState<DomainScore[]>([])
   const [opts, setOpts] = useState<PlannerOptions | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -38,7 +25,7 @@ export function Home({ open }: { open: (id: number) => void }) {
     try {
       const ns = await api.nodes()
       setNodes(ns)
-      setMastery(await loadMastery(ns))
+      setMastery(await api.scores())
     } catch (e) {
       setErr(errMsg(e))
     }
@@ -126,15 +113,15 @@ export function Home({ open }: { open: (id: number) => void }) {
         )}
       </Card>
       <Card title="Mastery">
-        {Object.keys(mastery).length === 0 && <p className="text-sm text-gray-500">No evidence yet. Finish a node to fill these.</p>}
+        {mastery.length === 0 && <p className="text-sm text-gray-500">No scores yet.</p>}
         <ul className="space-y-2">
-          {Object.values(mastery).map((m) => (
+          {mastery.map((m) => (
             <li key={m.domain} data-testid={`mastery-${m.domain}`}>
               <div className="flex justify-between text-sm">
-                <span>{m.domain} <span className="text-gray-500">T{m.tier}</span></span>
-                <span className="font-mono">{m.mastery_after}%</span>
+                <span>{m.name} <span className="text-gray-500">T{m.tier}</span>{m.unlocked && <Badge tone="green">exam ready</Badge>}</span>
+                <span className="font-mono">{m.mastery}%</span>
               </div>
-              <progress className="h-2 w-full accent-sky-600" max={100} value={m.mastery_after} aria-label={`${m.domain} mastery`} />
+              <progress className="h-2 w-full accent-sky-600" max={100} value={m.mastery} aria-label={`${m.name} mastery`} />
             </li>
           ))}
         </ul>

@@ -395,6 +395,32 @@ class RficTools:
             "stderr_tail": _tail(res.stderr, 3000),
         }
 
+    def run_commands(self, node: str, commands: list[str], timeout_s: float, job: JobHandle | None = None) -> dict:
+        """Lab "Run simulation": the node's `run` commands (node.md), in order, in the live workspace with the node's PDK env.
+
+        Stops at the first non-zero exit. Output streams to the job; `files_changed` lists what the whole run wrote."""
+        node_c = self._cpath(node)
+        if posixpath.dirname(node_c) != CONTAINER_NODES:
+            raise ToolError(f"not a node directory: {node}")
+        name = self.containers.node_of(node_c)
+        pdk = node_pdk(self.containers.to_host(node_c))
+        host_ws = self.containers.to_host(self.containers.workspace_of(name))
+        before = self._snapshot(host_ws) if host_ws.is_dir() else {}
+        steps: list[dict] = []
+        for cmd in commands:
+            res, _ = self._run(
+                "sim.run", name, ["bash", "-c", cmd], timeout_s=timeout_s, pdk=pdk, job=job,
+                env={"PYTHONUNBUFFERED": "1", "MPLBACKEND": "Agg"},
+            )  # fmt: skip
+            steps.append({"cmd": cmd, "exit_code": res.returncode, "seconds": round(res.seconds, 1), "timed_out": res.timed_out,
+                          "stderr_tail": _tail(res.stderr, 1500) if res.returncode else ""})  # fmt: skip
+            if res.returncode != 0:
+                break
+        after = self._snapshot(host_ws) if host_ws.is_dir() else {}
+        changed = sorted(k for k, v in after.items() if before.get(k) != v)
+        return {"ok": bool(steps) and all(st["exit_code"] == 0 for st in steps) and len(steps) == len(commands), "steps": steps,
+                "files_changed": [{"path": k, "size": after[k][1]} for k in changed[:100]]}  # fmt: skip
+
     def parse_touchstone(self, path: str, max_points: int = 500) -> dict:
         """Read an .sNp file with scikit-rf. Returns {f_hz, S, ...}; S[freq][row][col] = [re, im]. Evenly decimated to max_points."""
         c, _ = self._existing_file(path, "touchstone file")

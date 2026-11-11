@@ -49,6 +49,17 @@ def run_checker(node_dir: Path, work_rel: str, out_rel: str, timeout_s: float) -
     return RficTools(ContainerManager(root), jobs).run_checker_at(node_dir.name, work_rel, out_rel, timeout_s)
 
 
+def run_commands(node_dir: Path, commands: list[str], timeout_s: float, job=None) -> dict:
+    """Lab "Run simulation": node_dir must live under the mounted nodes root."""
+    from domains.rfic.tools_mcp.tools import RficTools
+
+    root = default_nodes_root().resolve()
+    node_dir = Path(node_dir).resolve()
+    if node_dir.parent != root:
+        raise ContainerError(f"{node_dir} is not a node directory under {root} (the container only mounts that)")
+    return RficTools(ContainerManager(root), None, node=node_dir.name).run_commands(node_dir.name, commands, timeout_s, job)
+
+
 def _builder_mcp_config(node_dir: Path, out_path: Path, call_log: Path) -> Path:
     """MCP config pinned to one node; the node must live under the mounted nodes root (SPEC §4.2)."""
     from app.settings import data_dir
@@ -75,6 +86,7 @@ DOMAIN = Domain(
     checks=_image_check,
     fixes={"build_image": _build_image_fix},
     run_checker=run_checker,
+    run_commands=run_commands,
     framework_template=Path(__file__).parent / "framework_template.yaml",
     builder=BuilderHooks(prompt=Path(__file__).parent / "prompts" / "builder.md", tool_names=_tool_names, mcp_config=_builder_mcp_config),
 )

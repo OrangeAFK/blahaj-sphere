@@ -1,3 +1,4 @@
+import json
 import time
 
 import httpx
@@ -29,20 +30,25 @@ class OpenRouterAdapter:
             body["response_format"] = {"type": "json_object"}
         t0 = time.monotonic()
         try:
-            with httpx.Client(transport=self.transport, timeout=timeout_s) as c:
-                r = c.post(self.url, json=body, headers={"Authorization": f"Bearer {key}"})
+            with httpx.Client(transport=self.transport, timeout=timeout_s) as c, c.stream("POST", self.url, json=body, headers={"Authorization": f"Bearer {key}"}) as r:
+                status, chunks = r.status_code, []
+                for chunk in r.iter_bytes():  # httpx's timeout is per socket read, and OpenRouter keeps a queued request alive with
+                    chunks.append(chunk)  # keepalive bytes: enforce a hard per-attempt deadline here so a slow free model falls through
+                    if time.monotonic() - t0 > timeout_s:
+                        raise RetryableError(f"openrouter attempt exceeded {timeout_s:g} s")
         except (httpx.TimeoutException, httpx.TransportError) as e:
             raise RetryableError(f"openrouter transport error: {e}") from e
-        if r.status_code == 429:
-            raise RateLimited(f"openrouter HTTP 429: {r.text[:300]}")
-        if r.status_code >= 500:
-            raise RetryableError(f"openrouter HTTP {r.status_code}: {r.text[:300]}")
-        if r.status_code != 200:
-            raise LLMError(f"openrouter HTTP {r.status_code}: {r.text[:300]}")
+        text_body = b"".join(chunks).decode("utf-8", errors="replace")
+        if status == 429:
+            raise RateLimited(f"openrouter HTTP 429: {text_body[:300]}")
+        if status >= 500:
+            raise RetryableError(f"openrouter HTTP {status}: {text_body[:300]}")
+        if status != 200:
+            raise LLMError(f"openrouter HTTP {status}: {text_body[:300]}")
         try:
-            data = r.json()
+            data = json.loads(text_body)
         except ValueError as e:
-            raise RetryableError(f"openrouter returned non-JSON body: {r.text[:200]}") from e
+            raise RetryableError(f"openrouter returned non-JSON body: {text_body[:200]}") from e
         if "error" in data:  # OpenRouter sometimes returns 200 with an error body
             code = (data["error"] or {}).get("code")
             cls = RateLimited if code == 429 else RetryableError if code in (502, 503, 504, 408) else LLMError

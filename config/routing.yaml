@@ -6,7 +6,7 @@
 timeout_s:
   claude_code: 900
   cursor_cli: 900
-  openrouter: 60
+  openrouter: 20          # per attempt; a slow free model falls through to the next entry (DECISIONS M6c)
 
 # OpenRouter limits free models per ACCOUNT (20 req/min; 50/day under 10 credits), so a
 # backend-wide cap sits on top of the per-model cap. Counters reset at local midnight.
@@ -45,6 +45,16 @@ x-light: &light
     - {backend: openrouter, model: "openrouter/free"}
     - {backend: claude_code, model: claude-haiku-5-5}
 
+# Tutor replies are interactive: free models measured at a 20.7 s median first reply (6 live calls, M6c) vs claude-haiku-5-5 first,
+# free models as the fallback (DECISIONS M6c). Same light-tier handling as *light.
+x-tutor: &tutor
+  light: true
+  chain:
+    - {backend: claude_code, model: claude-haiku-5-5}
+    - {backend: openrouter, model: "google/gemma-4-31b-it:free"}
+    - {backend: openrouter, model: "nvidia/nemotron-3-ultra-550b-a55b:free"}
+    - {backend: openrouter, model: "openrouter/free"}
+
 # Live voice dialogue needs low latency and reliable instruction-following: Haiku first, free models as fallback (DECISIONS M4.1).
 x-oral: &oral
   light: true
@@ -69,7 +79,7 @@ tasks:
   grade_diagnostic: *grading
   grade_tier_exam: *grading
   interview: *light
-  tutor_chat: *light
+  tutor_chat: *tutor
   oral_dialogue: *oral
   diagnostic_dialogue: *light
   summarize: *light

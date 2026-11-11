@@ -127,10 +127,16 @@ class Lifecycle:
         return self.view(node_id)
 
     # --- lab (§7.3) ----------------------------------------------------------------------------------------
-    def open_folder(self, node_id: int) -> dict:
+    def open_folder(self, node_id: int, target: str = "workspace") -> dict:
         ref = self.store.find(node_id)
-        self.store.require(ref, *WORKING)
-        ws = ref.path / "workspace"
+        if target == "backup":  # the last rescope edit's copy of the learner's workspace
+            rel = self.store.session(ref, "rescope", {}).get("backup")
+            ws = (self.root / rel) if rel else None
+            if ws is None or not ws.is_dir():
+                raise LifecycleError(404, "this node has no rescope backup")
+        else:
+            self.store.require(ref, *WORKING)
+            ws = ref.path / "workspace"
         if sys.platform == "win32":
             os.startfile(ws)  # noqa: S606 - opens the learner's own workspace folder in Explorer
         elif sys.platform == "darwin":
@@ -138,6 +144,40 @@ class Lifecycle:
         else:
             subprocess.Popen(["xdg-open", str(ws)])
         return {"path": str(ws)}
+
+    def start_run(self, jobs, node_id: int):
+        """Lab "Run simulation": the node's `run` commands in the live workspace, as a job whose log streams to the tray.
+        The record (steps, exit codes, files the run wrote) is the latest entry of GET .../run."""
+        ref = self.store.find(node_id)
+        self.store.require(ref, *WORKING)
+        if self.domain.run_commands is None:
+            raise LifecycleError(501, "this domain cannot run node commands")
+        cmds = [str(c) for c in self.store.frontmatter(ref).get("run") or []]
+        if not cmds:
+            raise LifecycleError(422, "this node declares no run commands")
+        self._claim(ref, "run")
+
+        def run(handle) -> None:
+            try:
+                handle.log(f"running {len(cmds)} command(s) in your workspace")
+                t0 = time.monotonic()
+                rec = self.domain.run_commands(ref.path, cmds, CHECKER_TIMEOUT_S, handle)
+                rec |= {"ts": _now(), "seconds": round(time.monotonic() - t0, 1)}
+                self.store.save_session(ref, "run", rec)
+                if not rec["ok"]:
+                    bad = next((s for s in rec["steps"] if s["exit_code"]), {})
+                    raise RuntimeError(f"`{bad.get('cmd')}` exited {bad.get('exit_code')}")
+            finally:
+                self._release(ref, "run")
+
+        try:
+            return jobs.submit("run_commands", run, node_id=ref.name)
+        except Exception:
+            self._release(ref, "run")
+            raise
+
+    def latest_run(self, node_id: int) -> dict | None:
+        return self.store.session(self.store.find(node_id), "run", None)
 
     def _check(self, ref: NodeRef, kind: str) -> dict:
         """Run the checker on a throwaway copy of the workspace (like the gate), so runs never litter it with outputs."""
@@ -405,13 +445,15 @@ class Lifecycle:
                 jobs, ref.path, out["changes"], starter if starter.is_dir() else None,
                 on_success=lambda rec: (append_jsonl(self.root / "rescopes.jsonl", {**log, "event": "edited"}),
                                         autocommit(self.root, f"node {ref.id}: rescope edit")),  # fmt: skip
-                on_done=lambda: self.store.save_session(ref, "rescope", {"editing": False}),
+                on_done=lambda: self.store.save_session(ref, "rescope", {**self.store.session(ref, "rescope", {}), "editing": False}),
             )
         except Exception:
             self.store.save_session(ref, "rescope", {"editing": False})
             raise
-        append_jsonl(self.root / "rescopes.jsonl", {**log, "event": "requested"})
-        return {"action": "edit", "changes": out["changes"], "job_id": job.id, "node_dir": plan.name, "node_id": ref.id}
+        backup = (spec.backup / "node" / "workspace").relative_to(self.root).as_posix()  # your files from before the reset
+        self.store.save_session(ref, "rescope", {**self.store.session(ref, "rescope", {}), "backup": backup})
+        append_jsonl(self.root / "rescopes.jsonl", {**log, "event": "requested", "backup": backup})
+        return {"action": "edit", "changes": out["changes"], "job_id": job.id, "node_dir": plan.name, "node_id": ref.id, "backup": backup}
 
 
 __all__ = ["Lifecycle", "LifecycleError", "LLMError"]

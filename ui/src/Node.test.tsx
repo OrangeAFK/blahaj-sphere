@@ -84,9 +84,9 @@ test('lab: checker shows name, pass/fail, measured, spec, unit; Show me warns be
 test('rescope dialog warns that edit resets the workspace and links the backup', async () => {
   routes['GET /nodes/4'] = () => node({ status: 'lab', workspace: 'C:/ws' })
   labRoutes()
-  routes['POST /nodes/4/rescope'] = () => ({ action: 'edit', changes: 'simplify', job_id: 'j1', node_dir: '0004-x', node_id: 4 })
+  routes['POST /nodes/4/rescope'] = () => ({ action: 'edit', changes: 'simplify', job_id: 'j1', node_dir: '0004-x', node_id: 4, backup: 'builds/0004-x/rescope-1/node/workspace' })
+  routes['POST /nodes/4/open-folder?target=backup'] = () => ({ path: 'x' })
   routes['GET /jobs/j1'] = () => ({ id: 'j1', status: 'done' })
-  routes['GET /build/0004-x'] = () => ({ learner_workspace_backup: 'builds/0004-x/rescope-1/node/workspace' })
   render(<NodePage id={4} home={() => {}} />)
   fireEvent.click(await screen.findByText('Rescope…'))
   const dlg = screen.getByRole('dialog', { name: 'Rescope' })
@@ -99,6 +99,8 @@ test('rescope dialog warns that edit resets the workspace and links the backup',
   const res = await screen.findByTestId('rescope-result')
   await waitFor(() => expect(res).toHaveTextContent('data/builds/0004-x/rescope-1/node/workspace'))
   expect(calls.find((c) => c.key === 'POST /nodes/4/rescope')?.body).toEqual({ reason_class: 'too_hard', reason: 'stuck' })
+  fireEvent.click(screen.getByText('Open backup folder'))
+  await waitFor(() => expect(calls.some((c) => c.key === 'POST /nodes/4/open-folder?target=backup')).toBe(true))
 })
 
 test('debrief shows calibration, pending badge and mastery deltas', async () => {
@@ -123,10 +125,40 @@ test('home: current node with one next-action button and mastery bars', async ()
     { id: 3, dir: 'd3', title: 'Old', status: 'done', provisional: false, next_action: 'plan_next', domain: 'measurement', tier: 3 },
     { id: 4, dir: 'd4', title: 'Current', status: 'lab', provisional: false, next_action: 'submit_proof', domain: 'measurement', tier: 3 },
   ]
-  routes['GET /nodes/3/debrief'] = () => ({ mastery: [{ domain: 'measurement', tier: 3, mastery_before: 0, mastery_after: 42, delta: 42, exam_unlocked: false }] })
+  routes['GET /scores'] = () => [{ domain: 'measurement', name: 'Measurement', tier: 3, mastery: 42, n_window: 3, unlocked: false, subskills_evidenced: [] }]
   const open = vi.fn()
   render(<Home open={open} />)
   fireEvent.click(await screen.findByText('Open the lab'))
   expect(open).toHaveBeenCalledWith(4)
-  expect(await screen.findByLabelText('measurement mastery')).toHaveAttribute('value', '42')
+  expect(await screen.findByLabelText('Measurement mastery')).toHaveAttribute('value', '42')
+})
+
+test('lab: Run simulation streams the job log and lists the files the run wrote', async () => {
+  routes['GET /nodes/4'] = () => node({ status: 'lab', workspace: 'C:/ws' })
+  labRoutes()
+  routes['GET /nodes/4/run'] = () => null
+  routes['POST /nodes/4/run'] = () => ({ job_id: 'r1' })
+  routes['GET /jobs/r1'] = () => ({ id: 'r1', status: 'done', log_tail: ['$ ngspice -b bench.sp', 'done'] })
+  render(<NodePage id={4} home={() => {}} />)
+  await screen.findByText('Run simulation')
+  routes['GET /nodes/4/run'] = () => ({ ok: true, ts: 't', seconds: 2.5, steps: [{ cmd: 'ngspice -b bench.sp', exit_code: 0, seconds: 2, timed_out: false, stderr_tail: '' }],
+                                        files_changed: [{ path: 'raw_p1.txt', size: 1234 }] })
+  fireEvent.click(screen.getByText('Run simulation'))
+  expect(await screen.findByText('raw_p1.txt')).toBeInTheDocument()
+  expect(screen.getByTestId('run-log')).toHaveTextContent('$ ngspice -b bench.sp')
+  expect(screen.getByTestId('run-result')).toHaveTextContent('simulation ok')
+})
+
+test('debrief shows the persisted final checker result', async () => {
+  routes['GET /nodes/4'] = () => node({ status: 'debrief' })
+  routes['GET /nodes/4/debrief'] = () => ({
+    node_id: 4, title: 'x', status: 'debrief', provisional: false, proof: { passed: true, submissions: 1, failed_submissions: 0 },
+    checker: { verdict: 'pass', kind: 'proof', seconds: 1, metrics: {}, tests: [{ name: 'S21 error', pass: true, measured: 0.17, spec: '<= 0.5', unit: 'dB' }] },
+    calibration: { within: 0, total: 0, numeric: [] }, grades: { status: 'graded', items: [], pending_items: [], model: 'm' },
+    oral: { status: 'not_graded', note: 'M7' }, misconceptions: { logged: [], resolved: [] }, mastery: [], next_action: 'finish_debrief',
+  })
+  render(<NodePage id={4} home={() => {}} />)
+  const row = (await screen.findByText('S21 error')).closest('tr')!
+  expect(row).toHaveTextContent('0.17')
+  expect(screen.getByTestId('debrief-checker')).toHaveTextContent('proof run')
 })

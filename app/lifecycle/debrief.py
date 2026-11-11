@@ -17,7 +17,7 @@ from app.datastore.cache import DataStore
 from app.datastore.misconceptions import RESOLVE_MIN_VALUE, add_misconception, fold, read_records, resolve_misconception
 from app.datastore.events import new_event, read_events
 from app.lifecycle.nodes import LifecycleError, NodeRef, NodeStore, autocommit, node_lock
-from app.lifecycle.tutor import Tutor
+from app.lifecycle.tutor import Tutor, public_checker
 from app.llm.types import LLMError
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
@@ -225,6 +225,7 @@ class Debrief:
             "node_id": ref.id, "title": fm.get("title"), "status": self.store.status(ref), "provisional": bool(fm.get("provisional")),
             "proof": {"passed": any(s.get("verdict") == "pass" for s in subs), "submissions": len(subs),
                       "failed_submissions": sum(1 for s in subs if s.get("verdict") == "fail")},  # fmt: skip
+            "checker": public_checker(self.store.session(ref, "checker", None)),  # the latest run (the passing proof run after proof)
             "calibration": {"numeric": cal, "within": sum(1 for c in cal if c["within"]), "total": len(cal)},
             "grades": {"status": "pending" if g["status"] == "pending" else "graded" if g["items"] else "none",
                        "items": [{k: r[k] for k in ("id", "subskill", "prompt", "score", "quote", "rationale")} for r in g.get("results", [])],

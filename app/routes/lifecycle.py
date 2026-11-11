@@ -1,7 +1,7 @@
 """Node lifecycle endpoints (SPEC §7.2-7.7): prelab, lab, tutor, proof, oral stub, debrief, rescope, grading queue.
 Sync handlers run in the threadpool."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -146,6 +146,7 @@ class RescopeStarted(BaseModel):
     job_id: str
     node_dir: str
     node_id: int
+    backup: str | None = None  # edit only: data/-relative folder holding your workspace from before the reset
 
 
 @router.get("/nodes", response_model=list[NodeSummary], operation_id="listNodes")
@@ -165,8 +166,20 @@ def submit_prelab(node_id: int, body: PrelabBody, request: Request) -> dict:
 
 
 @router.post("/nodes/{node_id}/open-folder", operation_id="openNodeFolder")
-def open_folder(node_id: int, request: Request) -> dict:
-    return _call(lambda: _lc(request).open_folder(node_id))
+def open_folder(node_id: int, request: Request, target: Literal["workspace", "backup"] = "workspace") -> dict:
+    return _call(lambda: _lc(request).open_folder(node_id, target))
+
+
+@router.post("/nodes/{node_id}/run", response_model=JobStarted, status_code=202, operation_id="runNodeSimulation")
+def run_simulation(node_id: int, request: Request, m: Jobs) -> dict:
+    """Run the node's `run` commands in the workspace as a job; output streams to the job log."""
+    job = _call(lambda: _lc(request).start_run(m, node_id))
+    return {"job_id": job.id}
+
+
+@router.get("/nodes/{node_id}/run", operation_id="getNodeRun")
+def get_run(node_id: int, request: Request):
+    return _call(lambda: _lc(request).latest_run(node_id))
 
 
 @router.post("/nodes/{node_id}/checker/run", response_model=JobStarted, status_code=202, operation_id="runNodeChecker")

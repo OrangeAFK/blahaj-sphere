@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, REASON_CLASSES, waitJob, type CheckerView, type CheckTest, type DebriefView, type NodeView, type ProofView } from './api/client'
+import { api, REASON_CLASSES, waitJob, type CheckerView, type CheckTest, type DebriefView, type NodeView, type ProofView, type RunRecord } from './api/client'
 import { Badge, Btn, Card, Err, errMsg } from './ui'
 import { Tutor } from './Tutor'
 
@@ -150,6 +150,8 @@ function CheckResult({ c }: { c: CheckerView }) {
 function Lab({ node, reload }: { node: NodeView; reload: () => void }) {
   const [check, setCheck] = useState<CheckerView | null>(null)
   const [proof, setProof] = useState<ProofView | null>(null)
+  const [run, setRun] = useState<RunRecord | null>(null)
+  const [runLog, setRunLog] = useState<string[]>([])
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [running, setRunning] = useState('')
@@ -158,6 +160,7 @@ function Lab({ node, reload }: { node: NodeView; reload: () => void }) {
   const refreshProof = useCallback(async () => setProof(await api.proof(id)), [id])
   useEffect(() => {
     api.checker(id).then(setCheck).catch(() => {})
+    api.latestRun(id).then(setRun).catch(() => {})
     refreshProof().catch(() => {})
   }, [id, refreshProof])
 
@@ -172,11 +175,11 @@ function Lab({ node, reload }: { node: NodeView; reload: () => void }) {
       setErr(`${label} failed: ${errMsg(e)}`)
     }
   }
-  const runJob = async (label: string, start: () => Promise<{ job_id: string }>, after: () => Promise<void>) => {
+  const runJob = async (label: string, start: () => Promise<{ job_id: string }>, after: () => Promise<void>, tick?: (log: string[]) => void) => {
     setRunning(label)
     setErr('')
     try {
-      const j = await waitJob((await start()).job_id)
+      const j = await waitJob((await start()).job_id, 1000, tick ? (x) => tick(x.log_tail) : undefined)
       if (j.status === 'failed') setErr(`${label} failed: ${j.error ?? 'job failed'}`)
       await after()
     } catch (e) {
@@ -199,11 +202,31 @@ function Lab({ node, reload }: { node: NodeView; reload: () => void }) {
           <Btn onClick={() => act('Xschem', () => api.launchGui('xschem', dir))}>Xschem</Btn>
           <Btn onClick={() => act('KLayout', () => api.launchGui('klayout', dir))}>KLayout</Btn>
           <Btn onClick={() => act('Qucs-S', () => api.launchGui('qucs-s', dir))}>Qucs-S</Btn>
+          <Btn disabled={!!running} onClick={() => { setRunLog([]); void runJob('Simulation', () => api.runSimulation(id), async () => setRun(await api.latestRun(id)), setRunLog) }}>
+            {running === 'Simulation' ? 'Running simulation…' : 'Run simulation'}
+          </Btn>
           <Btn primary disabled={!!running} onClick={() => runJob('Checker', () => api.runChecker(id), async () => setCheck(await api.checker(id)))}>
             {running === 'Checker' ? 'Running checker…' : 'Run checker'}
           </Btn>
         </div>
         {msg && <p className="mt-1 text-xs text-gray-600">{msg}</p>}
+        {(running === 'Simulation' || runLog.length > 0) && (
+          <pre data-testid="run-log" className="mt-2 max-h-40 overflow-auto rounded bg-slate-900 p-2 text-xs text-green-100">{runLog.join('\n') || 'starting…'}</pre>
+        )}
+        {run && (
+          <div data-testid="run-result" className="mt-2 text-sm">
+            <div className="flex items-center gap-2">
+              <Badge tone={run.ok ? 'green' : 'red'}>{run.ok ? 'simulation ok' : 'simulation failed'}</Badge>
+              <span className="text-xs text-gray-500">{run.seconds}s · {run.steps.map((s) => `${s.cmd} → ${s.exit_code}`).join(' ; ')}</span>
+            </div>
+            {run.steps.filter((st) => st.stderr_tail).map((st, i) => <pre key={i} className="mt-1 max-h-24 overflow-auto bg-gray-50 p-1 text-xs">{st.stderr_tail}</pre>)}
+            <p className="mt-1 text-xs uppercase text-gray-500">Files written</p>
+            <ul className="font-mono text-xs">
+              {run.files_changed.map((f) => <li key={f.path}>{f.path} <span className="text-gray-500">{f.size} B</span></li>)}
+              {run.files_changed.length === 0 && <li className="text-gray-500">none</li>}
+            </ul>
+          </div>
+        )}
         {check && <CheckResult c={check} />}
         <Err e={err} />
       </Card>
@@ -286,6 +309,12 @@ function Debrief({ node, onDone, home }: { node: NodeView; onDone: () => void; h
   return (
     <Card title="Debrief" right={d.grades.status === 'pending' ? <Badge tone="amber">grades pending</Badge> : <Badge tone="green">graded</Badge>}>
       <p className="text-sm">Proof: {d.proof.passed ? 'passed' : 'not passed'} after {d.proof.submissions} submission(s).</p>
+      {d.checker && (
+        <div data-testid="debrief-checker">
+          <h3 className="mt-3 text-sm font-semibold">Final checker result</h3>
+          <CheckResult c={d.checker} />
+        </div>
+      )}
       <h3 className="mt-3 text-sm font-semibold">Prediction vs actual ({d.calibration.within}/{d.calibration.total} within tolerance)</h3>
       <table className="w-full text-left text-sm">
         <thead className="text-xs uppercase text-gray-500"><tr><th>Item</th><th>Predicted</th><th>Actual</th><th>Error</th><th /></tr></thead>
@@ -356,20 +385,17 @@ function Rescope({ node, close, reload, setBusyMsg }: { node: NodeView; close: (
   const [reason, setReason] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const [res, setRes] = useState<{ action: string; changes: string; backup?: string } | null>(null)
+  const [res, setRes] = useState<{ action: string; changes: string; backup?: string | null } | null>(null)
 
   const go = async () => {
     setBusy(true)
     setErr('')
     try {
       const r = await api.rescope(node.id, cls, reason)
-      setRes({ action: r.action, changes: r.changes })
+      setRes({ action: r.action, changes: r.changes, backup: r.backup })
       setBusyMsg(`Rescope (${r.action}) running: ${r.changes}`)
       const j = await waitJob(r.job_id)
-      let backup: string | undefined
-      if (r.action === 'edit') backup = await api.buildRecord(r.node_dir).then((b) => b.learner_workspace_backup ?? b.edit?.backup).catch(() => undefined)
       setBusyMsg(j.status === 'failed' ? `Rescope failed: ${j.error}` : r.action === 'replace' ? `Replacement node ${r.node_id} built; this node is rescoped.` : '')
-      setRes({ action: r.action, changes: r.changes, backup })
       reload()
     } catch (e) {
       setErr(errMsg(e))
@@ -393,12 +419,15 @@ function Rescope({ node, close, reload, setBusyMsg }: { node: NodeView; close: (
                   onChange={(e) => setReason(e.target.value)} />
         <p className="mt-2 rounded bg-amber-50 p-2 text-xs text-amber-900">
           The agent either <b>edits</b> this node or <b>replaces</b> it. An edit <b>resets the workspace</b> to a fresh starter; your current files are saved first in{' '}
-          <code>data/builds/{node.dir}/rescope-&lt;timestamp&gt;/node/workspace</code> (newest <code>rescope-*</code> folder; the API does not expose the exact path yet). Prelab answers stay locked.
+          <code>data/builds/{node.dir}/rescope-&lt;timestamp&gt;/node/workspace</code> (the exact folder is shown once you confirm). Prelab answers stay locked.
         </p>
         {res && (
           <div className="mt-2 text-sm" data-testid="rescope-result">
             <p>Agent chose <b>{res.action}</b>: {res.changes}</p>
-            {res.action === 'edit' && <p>Backup of your workspace: <code className="break-all">{res.backup ? `data/${res.backup}` : `data/builds/${node.dir}/rescope-<newest>/node/workspace`}</code></p>}
+            {res.backup && (
+              <p>Backup of your workspace: <code className="break-all">data/{res.backup}</code>{' '}
+                <Btn onClick={() => api.openFolder(node.id, 'backup').catch((e) => setErr(errMsg(e)))}>Open backup folder</Btn></p>
+            )}
           </div>
         )}
         <Err e={err} />

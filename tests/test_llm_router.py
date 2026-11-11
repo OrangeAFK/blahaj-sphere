@@ -58,7 +58,7 @@ def test_shipped_routing_yaml_is_valid_and_complete():
     assert [(e.backend, e.model) for e in rv.chain] == [("claude_code", "claude-sonnet-5-5")] and not rv.grading and not rv.light
     g = cfg.tasks["grade_oral"]
     assert g.grading and len(g.chain) == 1 and g.chain[0].model
-    light = cfg.tasks["tutor_chat"]
+    light = cfg.tasks["interview"]
     assert light.light and (light.chain[-1].backend, light.chain[-1].model) == ("claude_code", "claude-haiku-5-5")
     assert not cfg.tasks["draft_framework"].light
 
@@ -365,7 +365,10 @@ def test_oral_dialogue_is_haiku_first_with_free_fallback():
     oral = cfg.tasks["oral_dialogue"]
     assert oral.light and (oral.chain[0].backend, oral.chain[0].model) == ("claude_code", "claude-haiku-5-5")
     assert [e.backend for e in oral.chain[1:]] == ["openrouter"] * 3
-    assert cfg.tasks["tutor_chat"].chain[0].backend == "openrouter"  # the other light tasks keep free-first
+    tutor = cfg.tasks["tutor_chat"]  # M6c: free models measured 20.7 s median first reply, so the tutor is haiku-first too
+    assert tutor.light and (tutor.chain[0].backend, tutor.chain[0].model) == ("claude_code", "claude-haiku-5-5")
+    assert cfg.tasks["interview"].chain[0].backend == "openrouter"  # the other light tasks keep free-first
+    assert load_routing().timeout("openrouter") == 20  # per-attempt cap on free models
 
 
 def test_per_task_timeout_overrides_backend_timeout(tmp_path):

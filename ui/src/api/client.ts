@@ -50,8 +50,19 @@ export type DebriefView = {
   misconceptions: { logged: { id: string; text: string; subskill: string }[]; resolved: { id: string; text: string; subskill: string }[] }
   mastery: MasteryDelta[]
   next_action: string
+  checker: CheckerView | null
 }
-export type LlmUsage = { usage: { backend: string; model: string; count: number }[]; pending_grades: number }
+export type LlmUsage = {
+  usage: { backend: string; model: string; count: number; cap: number | null }[]
+  backends: { backend: string; count: number; cap: number | null; remaining: number | null }[]
+  pending_grades: number
+}
+export type DomainScore = components['schemas']['DomainScoreView']
+export type RunRecord = {
+  ok: boolean; ts: string; seconds: number
+  steps: { cmd: string; exit_code: number; seconds: number; timed_out: boolean; stderr_tail: string }[]
+  files_changed: { path: string; size: number }[]
+}
 export const REASON_CLASSES = ['too_hard', 'wrong_direction', 'objection', 'broken_env'] as const
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -94,7 +105,10 @@ export const api = {
   nodes: () => req<NodeSummary[]>('/nodes'),
   node: (id: number) => req<NodeView>(`/nodes/${id}`),
   submitPrelab: (id: number, answers: Record<string, string | number>) => post<NodeView>(`/nodes/${id}/prelab/submit`, { answers }),
-  openFolder: (id: number) => post<{ path: string }>(`/nodes/${id}/open-folder`),
+  openFolder: (id: number, target: 'workspace' | 'backup' = 'workspace') => post<{ path: string }>(`/nodes/${id}/open-folder?target=${target}`),
+  runSimulation: (id: number) => post<{ job_id: string }>(`/nodes/${id}/run`),
+  latestRun: (id: number) => req<RunRecord | null>(`/nodes/${id}/run`),
+  scores: () => req<DomainScore[]>('/scores'),
   runChecker: (id: number) => post<{ job_id: string }>(`/nodes/${id}/checker/run`),
   checker: (id: number) => req<CheckerView | null>(`/nodes/${id}/checker`),
   tutorHistory: (id: number) => req<TutorHistory>(`/nodes/${id}/tutor`),
@@ -129,9 +143,10 @@ export function subscribeJobs(onJob: (j: Job) => void, onState: (connected: bool
 }
 
 /** Poll a job until it finishes (the tray shows live progress; this just tells a panel when to refetch). */
-export async function waitJob(id: string, everyMs = 1000): Promise<Job> {
+export async function waitJob(id: string, everyMs = 1000, onTick?: (j: Job) => void): Promise<Job> {
   for (;;) {
     const j = await api.job(id)
+    onTick?.(j)
     if (j.status === 'done' || j.status === 'failed') return j
     await new Promise((r) => setTimeout(r, everyMs))
   }

@@ -8,7 +8,7 @@ from typing import Callable
 
 from fastapi import APIRouter
 
-from app.jobs.manager import JobManager
+from app.jobs.manager import JobHandle, JobManager
 from app.jobs.store import Job
 from app.preflight import Check
 
@@ -35,6 +35,8 @@ class Domain:
     fixes: dict[str, Callable[[JobManager], Job]] = field(default_factory=dict)  # preflight fix_action -> starts a job
     # Release-gate checker runner (app/builder/gate.py): (node_dir, work_rel, out_rel, timeout_s) -> run dict.
     run_checker: Callable[[Path, str, str, float], dict] | None = None
+    # Lab "Run simulation": (node_dir, commands, per-command timeout_s, job handle) -> {ok, steps, files_changed}.
+    run_commands: Callable[[Path, list[str], float, JobHandle | None], dict] | None = None
     # Default competency framework (SPEC §8.1) that onboarding's framework drafter adapts to the user's goals.
     framework_template: Path | None = None
     builder: BuilderHooks | None = None

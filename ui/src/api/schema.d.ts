@@ -48,7 +48,7 @@ export interface paths {
         };
         /**
          * Get Llm Usage
-         * @description Today's per-model request counts and the number of grades awaiting retry.
+         * @description Today's per-model request counts with their caps, per-backend totals with caps and remaining, and grades awaiting retry.
          */
         get: operations["getLlmUsage"];
         put?: never;
@@ -459,6 +459,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/nodes/{node_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["getNodeRun"];
+        put?: never;
+        /**
+         * Run Simulation
+         * @description Run the node's `run` commands in the workspace as a job; output streams to the job log.
+         */
+        post: operations["runNodeSimulation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/nodes/{node_id}/checker/run": {
         parameters: {
             query?: never;
@@ -715,6 +736,26 @@ export interface paths {
         put?: never;
         /** Retry Grading */
         post: operations["retryGrading"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Scores
+         * @description Per-domain tier and mastery from events.jsonl (the cache's scores table).
+         */
+        get: operations["getScores"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -989,6 +1030,23 @@ export interface components {
             } | null;
             /** Domains */
             domains: components["schemas"]["DiagnosticDomain"][];
+        };
+        /** DomainScoreView */
+        DomainScoreView: {
+            /** Domain */
+            domain: string;
+            /** Name */
+            name: string;
+            /** Tier */
+            tier: number;
+            /** Mastery */
+            mastery: number;
+            /** N Window */
+            n_window: number;
+            /** Unlocked */
+            unlocked: boolean;
+            /** Subskills Evidenced */
+            subskills_evidenced: string[];
         };
         /** Framework */
         Framework: {
@@ -1318,6 +1376,8 @@ export interface components {
             node_dir: string;
             /** Node Id */
             node_id: number;
+            /** Backup */
+            backup?: string | null;
         };
         /** RunRequest */
         RunRequest: {
@@ -2122,7 +2182,9 @@ export interface operations {
     };
     openNodeFolder: {
         parameters: {
-            query?: never;
+            query?: {
+                target?: "workspace" | "backup";
+            };
             header?: never;
             path: {
                 node_id: number;
@@ -2140,6 +2202,68 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getNodeRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runNodeSimulation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */
@@ -2665,6 +2789,26 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    getScores: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainScoreView"][];
                 };
             };
         };
