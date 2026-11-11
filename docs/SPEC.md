@@ -1,4 +1,4 @@
-# BlahajSphere — Implementation Spec v1.1
+# BlahajSphere — Implementation Spec v1.2 (adds tracks + amendments recorded through M6c)
 
 Agent-driven, gamified desktop tutor for simulation-heavy engineering. v1 domain: **RFICs**. Domain-pluggable architecture (frontier ML, topological CM later).
 
@@ -10,6 +10,8 @@ Agent-driven, gamified desktop tutor for simulation-heavy engineering. v1 domain
 - Items marked **[VERIFY]** are assumptions to confirm at M0. If false, choose the closest equivalent and record it in `DECISIONS.md`.
 - All automated tests use the `mock` LLM adapter (§3). Each milestone gets exactly one manual live smoke test.
 - Domain-specific content lives only in `domains/<domain>/` (§2).
+- Any acceptance run that creates learner evidence (events, misconceptions, node stage changes) runs on a **temporary copy of `data/`**, never the real one.
+- Grader prompts are frozen by SHA-256 test; any edit is logged in DECISIONS.md with the new hash in the same commit.
 
 ---
 
@@ -64,17 +66,20 @@ Interface: `complete(task_type, messages, schema=None, cwd=None, tools=None) -> 
 |---|---|---|
 | `claude_code` | subprocess `claude -p --output-format json --model <id> --mcp-config <file> --allowedTools <explicit list> --permission-mode <non-interactive mode>` **[VERIFY flags; must never block on a permission prompt]**. cwd = node dir. **Strip `ANTHROPIC_API_KEY` and similar API-key vars from the subprocess env** so it uses the subscription login **[VERIFY billing behavior]**. Timeout per call (default 15 min). | heavy |
 | `cursor_cli` | subprocess `cursor-agent -p ...` **[VERIFY name/flags]**. Optional fallback. | heavy |
-| `openrouter` | OpenAI-compatible HTTPS; **only model IDs ending `:free`**; key in settings | light |
+| `openrouter` | OpenAI-compatible HTTPS; **only model IDs ending `:free`, or exactly `openrouter/free`**; key in settings; hard per-attempt deadline 20 s (not per-socket-read) | light |
 | `mock` | Returns canned fixtures from `tests/fixtures/llm/<task_type>/*.json` | tests |
 
 **Routing** (`config/routing.yaml`, user-editable)
 | task_type | primary | fallback |
 |---|---|---|
-| plan_branches, build_challenge, draft_framework, rescope | claude_code | cursor_cli |
-| grade_oral, grade_prelab_explain, grade_diagnostic, grade_tier_exam | claude_code, **pinned model ID** (§8.5) | none → grading queue (§3.1) |
-| interview, tutor_chat, oral_dialogue, diagnostic_dialogue, summarize | openrouter free list (ordered) | claude_code |
+| plan_branches, build_challenge, fidelity_review | claude_code / `claude-sonnet-5-5` | cursor_cli |
+| draft_framework, rescope, show_me | claude_code | cursor_cli |
+| grade_oral, grade_prelab_explain, grade_diagnostic, grade_tier_exam | claude_code / `claude-sonnet-5-5` (**pinned**, §8.5) | none → grading queue (§3.1) |
+| tutor_chat, oral_dialogue | claude_code / `claude-haiku-5-5` | openrouter free list |
+| interview, diagnostic_dialogue, summarize | openrouter free list (ordered) | claude_code / `claude-haiku-5-5` |
 
-- Auto-failover across the free list on 429/5xx/timeout.
+- **Light-call and no-tool overhead:** any claude_code call with no tools and no MCP config uses a replacement minimal system prompt (cuts ~25k → ~1k input tokens).
+- Auto-failover across the free list on 429/5xx/timeout. A model returning 429 is skipped for 30 min (`rate_limit_cooldown_s`, persisted in llm.db).
 - **Daily request counter** per free model; skip models at their cap **[VERIFY current OpenRouter free limits at M0]**.
 - Log every call to `llm_calls`: task_type, backend, model, tokens (if reported), latency, node_id. Settings shows daily usage.
 - Grading never fails over to a different model.
@@ -88,15 +93,21 @@ Agents never receive the raw archive. They get `data/archive/SUMMARY.md` (≤ 1,
 
 ## 4. Data model
 
-### 4.1 Filesystem (`data/`, git repo; auto-commit at each stage transition)
+### 4.1 Filesystem (`data/`, git repo, `core.autocrlf false`; auto-commit at each stage transition)
 ```
 data/
-  .gitignore                     # ignores workspace sim outputs (*.raw, *.s*p over 1 MB, openEMS dirs, __pycache__)
-  profile/goals.md
-  framework/competency-v1.yaml   # frozen ruler (§8.1)
-  events.jsonl                   # APPEND-ONLY source of truth for evidence (§5.8)
-  archive/SUMMARY.md
-  archive/nodes/0007-l-match-60ghz/
+  .gitignore                     # sim outputs (*.raw, all *.sNp, openEMS dirs, __pycache__), settings.json
+  tracks.yaml                    # track registry + active track id (§8.6)
+  events.jsonl                   # APPEND-ONLY source of truth for evidence, all tracks (§5.8)
+  misconceptions.jsonl           # APPEND-ONLY source of truth for misconceptions, all tracks
+  library/<book-id>/             # shared across tracks
+  _trash/                        # deleted tracks, recoverable until purged
+  builds/                        # build records, failed builds, rescope backups
+  tracks/<track-id>/
+    profile/goals.md
+    framework/competency-v1.yaml # frozen ruler for this track (§8.1)
+    archive/SUMMARY.md
+    archive/nodes/0007-l-match-60ghz/
     node.md        # frontmatter + brief (user-visible)
     prelab.md      # questions (user-visible)
     prelab_answers.yaml   # user's locked answers
@@ -105,26 +116,26 @@ data/
       reference_solution/   # files mirroring workspace/
       prelab_key.yaml
       oral_key.yaml
-      ref_result.json       # checker output on reference solution (gate step 1)
-    workspace/     # user works here
+      .checker/             # reference checker results (incl. ref_result.json)
+    workspace/     # user works here; only declared source files + xschemrc
     checker.py
     proof/         # copies of declared proof artifacts only
     oral.md        # transcript + grades
     debrief.md
-  library/<book-id>/
 ```
 
 ### 4.2 Container paths
-One long-lived container mounts `data/archive/nodes` → `/work/nodes` once. Per-node commands use `workdir=/work/nodes/<dir>/workspace`. All host↔container path translation lives in one function `to_container(path)`/`to_host(path)`; MCP tools accept host-relative node paths and translate.
+One long-lived container per domain image mounts `data/tracks` → `/work/tracks` once. Per-node commands use `workdir=/work/tracks/<track>/archive/nodes/<dir>/workspace`. All host↔container path translation lives in one function `to_container(path)`/`to_host(path)`; MCP tools accept host-relative node paths and translate.
 
-### 4.3 SQLite (cache, rebuildable from files + events.jsonl via `rebuild_db` command)
-`nodes`, `subskills`, `scores`, `tiers`, `misconceptions`, `jobs`, `llm_calls`, `grading_queue`, `library_chunks`(book_id, page, text, embedding blob). `llm_calls`, `jobs`, and `grading_queue` are the only tables not rebuildable (operational).
+### 4.3 SQLite (cache `data/cache.db`, rebuildable from files + events.jsonl + misconceptions.jsonl via `rebuild_db`)
+`tracks`, `nodes`, `subskills`, `scores`, `tiers`, `misconceptions`, `library_chunks`(book_id, page, text, embedding blob). Every node/score/tier/misconception/subskill row carries `track`. Operational, not rebuildable, kept in separate files (`llm.db`, `jobs.db`): `llm_calls`, `jobs`, `grading_queue`, cooldowns.
 
 ## 5. Schemas (authoritative)
 
 ### 5.1 `node.md` frontmatter
 ```yaml
-id: 7
+id: 7                       # numbering restarts per track; global key = <track>:<id>
+track: rfic-default
 slug: l-match-60ghz
 title: "Hand-design an L-match at 60 GHz"
 parents: [5]
@@ -157,7 +168,10 @@ references: [{title: "...", url: "..."}, {book_id: "razavi-rf", page: 112}]
  "runtime_s": 95.3}
 ```
 `metrics` feed prelab numeric keys (§5.3).
-**Metric provenance (M5.1):** `checker.py` declares a module-level literal `METRIC_SOURCES = {"<metric>": "<output file>"}` (path relative to the work dir) for every numeric prelab metric; the gate verifies each file was produced by the reference run (not a source file) and contains the value. A metric the checker derives from raw simulator output instead declares those raw files as a list (`"<metric>": ["raw1", ...]`): the gate verifies they exist after the reference run. A declared file may never be one `checker.py` itself writes (M6a.1).
+
+**Metric provenance:** `checker.py` declares `METRIC_SOURCES = {metric: [raw simulator output file(s)]}`. Sources must be raw simulator output produced during the run; a derived metric lists the raw files it is computed from. The gate rejects sources that are input files or files written by `checker.py` itself (static scan of write calls), and verifies on the reference run that each source was produced by the run.
+
+**Learner visibility:** lab/proof/tutor/debrief show each test's name, pass/fail, measured value, spec threshold and unit, and all metrics **except** those a numeric prelab item asks about.
 
 ### 5.3 `prelab.md` + `_hidden/prelab_key.yaml`
 `prelab.md`: numbered items with id, prompt, and for numeric items a **fixed unit** (input field locked to it).
@@ -168,8 +182,8 @@ items:
     subskill: matching.l_network
     unit: ohm
     metric: Q_L                  # value extracted by code from ref_result.json.metrics
-    tolerance: {rel: 0.15}       # or {abs: 2.0}
-    hand_estimate: 3.4           # numeric items: the Builder's hand calculation, same unit; gate requires tolerance >= 1.5 x |hand_estimate - value| (M5)
+    hand_estimate: 3.4           # Builder's textbook hand-calc value
+    tolerance: {rel: 0.15}       # or {abs: 2.0}; gate requires tolerance ≥ 1.5·|hand−sim|/sim
   - id: p2
     kind: explain
     subskill: smith_chart.navigation
@@ -211,8 +225,9 @@ ladders:
 ```
 
 ### 5.8 Event (`events.jsonl`, one JSON per line)
+Stored `value` is the base value; modifiers (§8.2) apply at scoring time. `track` is required.
 ```json
-{"id": "uuid", "ts": "...", "node_id": 7, "domain": "matching", "subskill": "matching.l_network",
+{"id": "uuid", "ts": "...", "track": "rfic-default", "node_id": 7, "domain": "matching", "subskill": "matching.l_network",
  "tier": 2, "type": "proof_pass|oral_item|prelab_numeric|prelab_explain|tier_exam_item|diagnostic_item",
  "value": 0.67, "weight": 1.0, "interleaved": false, "assist_reveal": false,
  "grader_model": "model-id-or-null", "framework_version": 1}
@@ -227,7 +242,8 @@ ladders:
 - **[VERIFY at M0]** openEMS performance on a Windows-path bind mount vs. a WSL2-native path; if > 2× slower, place `data/` inside the WSL2 filesystem and record it.
 
 ### 6.2 MCP server (`domains/rfic/tools_mcp/`, stdio, heavy agents only)
-`run_ngspice(netlist)`, `run_openems(script, timeout_min)`, `run_python(path)`, `run_checker(node, target: workspace|reference)`, `parse_touchstone(path) -> {f, S}`, `list_pdk_models(pdk)`, `write_file`, `read_file`, `delete_file(path, recursive)` (sandboxed to the node dir; `delete_file` refuses the node dir, `workspace/`, `_hidden/` and `_hidden/reference_solution/` themselves). Heavy agents get no host file access: `claude -p` runs with `--disallowedTools Glob,Grep,Read`.
+`run_ngspice(netlist)`, `run_openems(script, timeout_min)`, `run_python(path)`, `run_checker(node, target: workspace|reference)`, `parse_touchstone(path) -> {f, S}`, `list_pdk_models(pdk)`, `write_file`, `read_file`, `delete_file(path, recursive=false)` (all sandboxed to the node dir; delete refuses the node dir, `workspace/`, `_hidden/`, `_hidden/reference_solution/`). Hand-rolled stdio JSON-RPC.
+Builder `claude -p` calls pass `--disallowedTools Glob,Grep,Read` so the sandboxed MCP tools are the only file access.
 
 ### 6.3 Job system
 All long work (build, sim, checker, grading, ingest, image pull, summarize) runs as **jobs**: in-process asyncio worker, `jobs` table (id, type, node_id, status queued|running|done|failed, progress 0–1, log tail). UI subscribes via SSE `/api/jobs/stream`; any screen shows active jobs in a tray.
@@ -253,14 +269,18 @@ Produces the full node directory. **Gate (enforced by code):**
 4. If any open misconception or any subskill not evidenced in the last 3 nodes exists: ≥ 1 prelab or oral item targets one (interleaving).
 5. `hints.yaml` covers every listed subskill; `vocab` non-empty.
 6. If `sim_runtime_s` > 600: brief must contain a long-run warning (UI shows it before Run).
-Failure → Builder retries with the gate error (max 2), then shows the error to the user.
+7. **File hygiene:** no empty files; `workspace/` and `reference_solution/` hold the same declared files (named in node.md; `xschemrc` exempt and required when Xschem/PDK symbols are used); nothing outside the §4.1 layout. Checker passes run on throwaway copies.
+8. **No answers in starter:** hard fail if any prelab key value appears in starter files (exempt |v| ≤ 12 and 25/50/75/100; ignore digits inside identifiers; SI-prefix matches only with ≥ 2 significant digits).
+9. **Metric provenance** per §5.2.
+10. **Fidelity review** (last, after code gates): one no-tool Sonnet call (frozen prompt) reads the option + node files; pass/fail with verbatim quotes on (a) method/PDK fidelity to the option, (b) every metric simulated, (c) no answers in starter. A review-call failure stops the build without consuming a retry.
+Failure → Builder retries with the gate error (max 2), then shows the error to the user. Per-attempt build timeout 3600 s. Toolchain health checked before each attempt and after the agent finishes; an engine crash aborts without consuming a retry.
 
 ### 7.2 Prelab
 User answers before workspace unlocks. Numeric answers use the fixed unit. Locked on submit. No feedback until Debrief.
 
 ### 7.3 Lab
-- Buttons: Open folder, Launch JupyterLab, Launch Xschem/KLayout/Qucs-S, **Run checker** (unlimited; shows per-test pass/fail and measured values, never spec-hidden values), Rescope.
-- **Rescope** (heavy): user gives a reason (too hard / wrong direction / objection / broken env). Agent edits the node (re-gated) or creates a replacement and marks this one `rescoped`. Reason logged; "too hard" counts as a failure for difficulty control (§7.7).
+- Buttons: Open folder, Launch JupyterLab, Launch Xschem/KLayout/Qucs-S, **Run simulation** (runs node `run` commands as a job, streams output, lists produced files; Lab/Proof stages only), **Run checker** (unlimited; visibility per §5.2), Rescope.
+- **Rescope** (heavy): user gives a reason (too hard / wrong direction / objection / broken env). Agent either **edits** the node (re-gated in place; keeps stage and locked prelab; workspace resets to starter with the old workspace backed up to `data/builds/<node>/rescope-<ts>/`; restored byte-identical if re-gating fails) or **replaces** it (new node built first with `parents=[old]`, then old marked `rescoped`; failed build leaves old untouched). UI warns about the reset and links the backup. Reason logged; "too hard" counts as a failure for difficulty control (§7.7).
 
 ### 7.4 Tutor (light tier)
 - Context injected by backend: brief, prelab questions, user's prelab answers, `hints.yaml`, current workspace text files (size-capped), last checker result, relevant library chunks (if allowed). **Never** `_hidden/`.
@@ -313,12 +333,39 @@ Unlock when mastery ≥ **65** AND ≥ 3 distinct subskills evidenced at tier T.
 ### 8.5 Grading consistency
 - `grading_model` = an explicit model ID (setting), used for all grading tasks; lowest available temperature; strict JSON schema; anchored 0–3 descriptors written at build time.
 - Changing it is logged; events carry `grader_model`.
+- Grader prompts frozen by SHA-256 test (§0).
+
+### 8.6 Tracks
+A **track** is an independent learning path with its own progress. One track is **active** at a time; Home, Planner, Builder, tutor, scores, graph and SUMMARY.md are scoped to it.
+
+| Field | Meaning |
+|---|---|
+| id | unique slug (`rfic-mmwave`) |
+| name | user-facing |
+| domain | installed domain plugin (`domains/<name>/`); v1 offers only `rfic` |
+| goals / framework | `tracks/<id>/profile/goals.md`, `tracks/<id>/framework/competency-vN.yaml` (§8.1 rules per track) |
+| tiers, scores | computed from events where `track == id` |
+| current node | per track; a paused track's in-progress node keeps its stage |
+| status | active, paused, archived |
+
+**Operations (Tracks screen):**
+- **Create:** name + domain plugin → onboarding (§9) for that track → becomes active.
+- **Enter/switch:** set active; other tracks unchanged.
+- **Rename.**
+- **Archive / unarchive:** hidden from the switcher; data kept, read-only.
+- **Reset:** move the track's nodes, events and misconceptions to trash; keep or re-edit goals; re-run framework + diagnostic.
+- **Delete:** typed-name confirmation → move `tracks/<id>/` and the track's event/misconception lines to `data/_trash/<id>-<ts>/` (restorable by moving back). **Purge trash** is a separate, explicitly confirmed action.
+
+**Rules:** domain/subskill IDs may repeat across tracks; scoring always filters by track. Interleaving, difficulty control and Planner use only the active track. Cross-track interleaving is a non-goal for v1. One Docker image per domain plugin; the container serves the active track's domain.
+
+**Migration (M7.5):** existing data → track `rfic-default` (name "RFIC"); add `track` to all events, misconceptions and node.md; rebuild_db; scores must match before and after.
 
 ## 9. Onboarding
 1. **Interview** (light, ≤ 10 questions) → `goals.md` (target capability, motivation, hours/week, background).
 2. **Framework draft** (heavy) → user approves (§8.1).
-3. **Diagnostic** (light dialogue, heavy grading): ~2 probes per domain, climb tiers until first miss → initial tier per domain; stored as a diagnostic node.
+3. **Diagnostic** (light dialogue, heavy grading immediately per answer): ≤ 2 probes per domain, climbing from T1, stop at first miss. A diagnostic tier passes at mean ≥ 2.0 with no 0. Initial tier = one above the highest tier passed, **capped at T3** (higher placement only via tier exams). Stored as node 0000-diagnostic of the track.
 4. Planner proposes first options. Goals editable anytime.
+Onboarding runs once per track (§8.6).
 
 ## 10. Library
 Upload PDF → job: PyMuPDF text per page (OCR if < 50 chars/page) → ~500-token chunks → fastembed → `library_chunks`. Retrieval: numpy cosine top-k (k=5). Cite `{book_id, page}`. Known limit: equations extract poorly. Free online references (OCW, PDK docs, papers) cited by URL.
@@ -333,11 +380,14 @@ Upload PDF → job: PyMuPDF text per page (OCR if < 50 chars/page) → ~500-toke
 | Competency | Domains × tiers with descriptors; mastery %; tier-exam availability; subskills |
 | Oral | Push-to-talk, live transcript, question audio |
 | Library | Upload, list, ingest progress |
-| Settings | Backends, OpenRouter key, routing, grading model, free-model counters, privacy toggle, usage log, Docker status |
+| Settings | Backends, OpenRouter key, routing, grading model, free-model counters + caps (from API), privacy toggle, usage log, Docker status |
+| Tracks | List (name, domain, status, tier summary, last activity) + actions per §8.6; active-track switcher in the header on every screen |
+| Setup | Onboarding + preflight |
+All markdown (briefs, prelab, hints, tutor/show-me replies, debrief) renders formatted via one shared component: GFM tables, KaTeX math, highlighted code; no raw HTML.
 Visual tone: playful shark motif, information-dense.
 
 ## 12. Non-goals (v1)
-Multi-user, cloud sync, mobile, paid APIs, tapeout, non-RFIC domains (interface only).
+Multi-user, cloud sync, mobile, paid APIs, tapeout, non-RFIC domain plugins (interface only; the track system itself is in scope), cross-track interleaving.
 
 ## 13. Known limitations (accepted)
 Free models may log prompts; textbook equations degrade in extraction; Builder quality bounds the product (validated by M2.5); openEMS speed on laptop limits EM challenge size.
@@ -353,8 +403,9 @@ Free models may log prompts; textbook equations degrade in extraction; Builder q
 | M3 | FS + events.jsonl + SQLite cache + `rebuild_db` + competency engine | 0, 4, 5, 8 | Unit tests cover every row of §8.2, §8.3 window, §8.4 unlock; rebuild reproduces scores |
 | M4 | Onboarding | 0, 5, 8.1, 9 | Fresh data dir → goals, approved framework, tiers (mock + one live run) |
 | M5 | Builder productionized + full gate + interleaving | 0, 4.1, 5, 7.1 | 3 nodes generated end-to-end from Planner options |
-| M6 | Lifecycle UI: prelab, lab, tutor, show-me, proof, debrief, rescope, grading queue | 0, 3.1, 5, 7.2–7.5, 7.7 | Node completable in text mode; tutor leaks no `_hidden` value in 5 adversarial prompts |
+| M6a–d | Lifecycle backend, UI, fixes (run simulation, persisted checker results, scores/caps APIs), markdown rendering | 0, 3.1, 5, 7.2–7.5, 7.7, 11 | Node completable in text mode; tutor leaks no `_hidden` value in 5 adversarial prompts — **done** |
 | M7 | Voice oral + grading | 0, 5.4, 5.7, 7.6 | Transcribes 15 s utterance in < 5 s on CPU; RFIC terms in vocab transcribed correctly in 8/10 test clips; grades valid JSON with quotes |
+| M7.5 | Tracks (§8.6) + migration; make all existing flows (incl. M7 oral: events, misconceptions, remediation) track-aware | 0, 4, 5.1, 5.8, 8, 11 | Migration reproduces identical scores; second track created on temp copy; switching changes Home/graph/scores/Planner inputs and leaves the other track untouched; archive/reset/delete/restore/purge work |
 | M8 | Planner, difficulty control, remediation, misconception resolution, graph | 0, 5.6, 7.7, 11 | Oral fail spawns remediation child; misconception reappears in a later node and resolves; graph renders |
 | M9 | Library | 0, 10 | 300-page PDF ingests locally; Builder cites pages |
 | M10 | Tier exams + polish | 0, 8.4, 11 | Tier-up from seeded events works end-to-end |
@@ -362,4 +413,4 @@ Free models may log prompts; textbook equations degrade in extraction; Builder q
 Orchestration: Claude Code owns M0–M3, M5, M2.5 review, and all prompt packs; Cursor does bulk UI (M6, M8 graph, M10) and boilerplate.
 
 ## 15. Prompt packs (`app/prompts/`, plus `domains/rfic/prompts/builder.md`)
-interviewer, framework_drafter, diagnostician, diagnostic_grader, planner, builder (domain), tutor, show_me, examiner, oral_grader, prelab_explain_grader, rescoper, summarizer. Each ≤ 800 tokens: role, exact inputs, output schema from §5, forbidden behaviors (tutor/examiner: never state hidden values or anchors).
+interviewer, framework_drafter, diagnostician, diagnostic_grader, planner, builder (domain), fidelity_reviewer, tutor, show_me, examiner, oral_grader, prelab_explain_grader, rescoper, summarizer. Each ≤ 800 tokens: role, exact inputs, output schema from §5, forbidden behaviors (tutor/examiner: never state hidden values or anchors). **Exception:** `domains/rfic/prompts/builder.md` may be up to 5,000 tokens (test-enforced), since it is the proven builder prompt.
