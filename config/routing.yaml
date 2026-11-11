@@ -22,7 +22,7 @@ x-heavy: &heavy
 
 # Builder model pinned by the M2.5 spike (DECISIONS): Sonnet 5.5 passed the gate 3/3 with 0 retries.
 x-builder: &builder
-  timeout_s: 2700          # per attempt; spike node c needed 1427 s, the claude_code default is 900 (DECISIONS M5)
+  timeout_s: 3600          # per attempt; spike node c needed 1427 s, EM rebuild 0005 used 1995 s (DECISIONS M5, M6a)
   chain:
     - {backend: claude_code, model: claude-sonnet-5-5}
     - {backend: cursor_cli}

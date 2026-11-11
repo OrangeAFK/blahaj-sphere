@@ -15,6 +15,8 @@ from app.onboarding.framework import Framework, FrameworkStore
 
 RECENT_NODES = 3  # §7.1 gate 4: "not evidenced in the last 3 nodes"
 RECENT_KINDS = ("challenge", "remediation", "tier_exam")  # the onboarding diagnostic is not a "node" for interleaving
+INACTIVE_STATUSES = ("abandoned", "rescoped")  # superseded nodes carry no evidence: they must not shorten the window (DECISIONS M6a)
+INACTIVE_SQL = "(" + ", ".join(f"'{s}'" for s in INACTIVE_STATUSES) + ")"
 MAX_TARGETS = 4  # the Builder gets a short, prioritized list; the gate checks against the same list
 PLANNER_HISTORY = 10  # §7.7: last 10 nodes' outcomes
 
@@ -72,7 +74,7 @@ def interleaving_context(root: Path, option: dict, limit: int = MAX_TARGETS) -> 
     fw = load_framework(root)
     fw_subs = {s: d.id for d in fw.domains for s in d.subskills} if fw else {}
     events, _ = read_events(root / "events.jsonl")
-    nodes = _rows(root, "SELECT id, kind FROM nodes ORDER BY id DESC")
+    nodes = _rows(root, f"SELECT id, kind FROM nodes WHERE COALESCE(status, '') NOT IN {INACTIVE_SQL} ORDER BY id DESC")
     recent = {r["id"] for r in [r for r in nodes if r["kind"] in RECENT_KINDS][:RECENT_NODES]}
     evidenced_recent = {e.subskill for e in events if e.node_id in recent}
     last_seen: dict[str, int] = {}

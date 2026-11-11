@@ -385,7 +385,7 @@ def test_per_task_timeout_overrides_backend_timeout(tmp_path):
     r.complete("summarize", MSG)
     r.complete("build_challenge", MSG)
     assert spy.timeouts == [("summarize", 30), ("build_challenge", 2700)]
-    assert load_routing().tasks["build_challenge"].timeout_s == 2700
+    assert load_routing().tasks["build_challenge"].timeout_s == 3600
 
 
 def test_claude_adapter_reports_turns_and_denied_tool_names(monkeypatch):

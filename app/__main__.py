@@ -16,6 +16,7 @@ def _free_port() -> int:
 
 
 def main() -> None:
+    app.state.grading_retry = True  # retry the grading queue on start and periodically (SPEC §3.1)
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()

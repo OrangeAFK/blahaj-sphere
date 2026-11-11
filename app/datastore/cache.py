@@ -17,6 +17,7 @@ from app.competency.engine import Event, score_all, tier_history
 
 from .events import append_event, read_events
 from .layout import DataLayout
+from .misconceptions import fold, read_records
 
 SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -95,6 +96,12 @@ def _index_nodes(conn: sqlite3.Connection, layout: DataLayout, report: RebuildRe
             conn.execute("INSERT INTO node_issues VALUES (?,?)", (d.name, msg))
 
 
+def _index_misconceptions(conn: sqlite3.Connection, layout: DataLayout) -> None:
+    """misconceptions.jsonl is the source of truth (append-only); the table is a fold of it."""
+    for m in fold(read_records(layout.misconceptions_path)):
+        conn.execute("INSERT INTO misconceptions VALUES (?,?,?,?,?)", (m["id"], m["text"], m["subskill"], m["node_id"], int(m["resolved"])))
+
+
 def refresh_competency(conn: sqlite3.Connection, events: Sequence[Event]) -> None:
     """Recompute scores, tier history and subskills from the event list. Used by rebuild and after each append, so
     the incremental path and a rebuild cannot disagree."""
@@ -136,6 +143,7 @@ def rebuild_db(data_dir: Path) -> RebuildReport:
     with closing(connect(layout.cache_path)) as conn, conn:
         conn.executescript(SCHEMA)
         _index_nodes(conn, layout, report)
+        _index_misconceptions(conn, layout)
         refresh_competency(conn, events)
         report.domains = conn.execute("SELECT COUNT(*) FROM scores").fetchone()[0]
         conn.execute("INSERT INTO meta VALUES ('events', ?)", (str(len(events)),))

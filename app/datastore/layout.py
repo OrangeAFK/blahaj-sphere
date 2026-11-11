@@ -37,6 +37,15 @@ class DataLayout:
         return self.root / "events.jsonl"
 
     @property
+    def misconceptions_path(self) -> Path:
+        return self.root / "misconceptions.jsonl"
+
+    @property
+    def sessions_dir(self) -> Path:
+        """Per-node runtime state (tutor chat, checker runs, submissions, grading); not part of the node (§4.1)."""
+        return self.root / "sessions"
+
+    @property
     def nodes_dir(self) -> Path:
         return self.root / "archive" / "nodes"
 
@@ -59,6 +68,7 @@ class DataLayout:
         if not gi.exists():
             gi.write_text(GITIGNORE, encoding="utf-8", newline="\n")
         self.events_path.touch(exist_ok=True)
+        self.misconceptions_path.touch(exist_ok=True)
 
 
 def node_dir_name(node_id: int, slug: str) -> str:

@@ -30,48 +30,56 @@ class PlannerError(Exception):
         self.message = message
 
 
+def validate_option(o, where: str, framework, scores: dict[str, dict]) -> tuple[dict | None, list[str]]:
+    """One option against the frozen framework and the learner's tiers -> (clean option, errors). Also used for Rescope."""
+    errors: list[str] = []
+    if not isinstance(o, dict):
+        return None, [f"{where}: must be an object"]
+    missing = [k for k in OPTION_KEYS if k not in o]
+    if missing:
+        return None, [f"{where}: missing keys {missing}"]
+    domains = {d.id: d for d in framework.domains}
+    for k in ("title", "why_now"):
+        if not isinstance(o[k], str) or not o[k].strip():
+            errors.append(f"{where}: `{k}` must be a non-empty string")
+    if o["kind"] not in KINDS:
+        errors.append(f"{where}: kind must be one of {list(KINDS)}")
+    dom = domains.get(o["domain"])
+    if dom is None:
+        errors.append(f"{where}: domain {o['domain']!r} is not in the framework {sorted(domains)}")
+    subs = o["subskills"]
+    all_subs = {s for d in framework.domains for s in d.subskills}
+    if not isinstance(subs, list) or not subs or not all(isinstance(s, str) for s in subs):
+        errors.append(f"{where}: subskills must be a non-empty list of framework subskill ids")
+    else:
+        unknown = [s for s in subs if s not in all_subs]
+        if unknown:
+            errors.append(f"{where}: unknown subskills {unknown}; use ids from the framework")
+        elif dom is not None and not any(s in dom.subskills for s in subs):
+            errors.append(f"{where}: at least one subskill must belong to domain {dom.id} {dom.subskills}")
+    cap = (scores.get(o["domain"]) or {}).get("tier", 1)
+    if isinstance(o["tier"], bool) or not isinstance(o["tier"], int) or not 1 <= o["tier"] <= cap:
+        errors.append(f"{where}: tier must be an integer 1..{cap} (the learner's current tier in {o['domain']})")
+    if isinstance(o["size_est_min"], bool) or not isinstance(o["size_est_min"], int) or not SIZE_MIN <= o["size_est_min"] <= SIZE_MAX:
+        errors.append(f"{where}: size_est_min must be an integer {SIZE_MIN}-{SIZE_MAX}")
+    if errors:
+        return None, errors
+    # models sometimes HTML-escape text ("K &gt; 1"); options are plain text (DECISIONS M5)
+    return {k: (html.unescape(o[k]).strip() if isinstance(o[k], str) else o[k]) for k in OPTION_KEYS}, []
+
+
 def validate_options(raw, framework, scores: dict[str, dict]) -> tuple[list[dict], list[str]]:
     """-> (clean options, errors). Every error is phrased so the model can repair it."""
     errors: list[str] = []
     opts = raw.get("options") if isinstance(raw, dict) else None
     if not isinstance(opts, list) or not MIN_OPTIONS <= len(opts) <= MAX_OPTIONS:
         return [], [f"`options` must be a list of {MIN_OPTIONS}-{MAX_OPTIONS} objects"]
-    domains = {d.id: d for d in framework.domains}
     clean = []
     for i, o in enumerate(opts, 1):
-        where = f"option {i}"
-        if not isinstance(o, dict):
-            errors.append(f"{where}: must be an object")
-            continue
-        missing = [k for k in OPTION_KEYS if k not in o]
-        if missing:
-            errors.append(f"{where}: missing keys {missing}")
-            continue
-        for k in ("title", "why_now"):
-            if not isinstance(o[k], str) or not o[k].strip():
-                errors.append(f"{where}: `{k}` must be a non-empty string")
-        if o["kind"] not in KINDS:
-            errors.append(f"{where}: kind must be one of {list(KINDS)}")
-        dom = domains.get(o["domain"])
-        if dom is None:
-            errors.append(f"{where}: domain {o['domain']!r} is not in the framework {sorted(domains)}")
-        subs = o["subskills"]
-        all_subs = {s for d in framework.domains for s in d.subskills}
-        if not isinstance(subs, list) or not subs or not all(isinstance(s, str) for s in subs):
-            errors.append(f"{where}: subskills must be a non-empty list of framework subskill ids")
-        else:
-            unknown = [s for s in subs if s not in all_subs]
-            if unknown:
-                errors.append(f"{where}: unknown subskills {unknown}; use ids from the framework")
-            elif dom is not None and not any(s in dom.subskills for s in subs):
-                errors.append(f"{where}: at least one subskill must belong to domain {dom.id} {dom.subskills}")
-        cap = (scores.get(o["domain"]) or {}).get("tier", 1)
-        if isinstance(o["tier"], bool) or not isinstance(o["tier"], int) or not 1 <= o["tier"] <= cap:
-            errors.append(f"{where}: tier must be an integer 1..{cap} (the learner's current tier in {o['domain']})")
-        if isinstance(o["size_est_min"], bool) or not isinstance(o["size_est_min"], int) or not SIZE_MIN <= o["size_est_min"] <= SIZE_MAX:
-            errors.append(f"{where}: size_est_min must be an integer {SIZE_MIN}-{SIZE_MAX}")
-        # models sometimes HTML-escape text ("K &gt; 1"); options are plain text (DECISIONS M5)
-        clean.append({k: (html.unescape(o[k]).strip() if isinstance(o[k], str) else o[k]) for k in OPTION_KEYS})
+        c, errs = validate_option(o, f"option {i}", framework, scores)
+        errors += errs
+        if c is not None:
+            clean.append(c)
     return (clean if not errors else []), errors
 
 

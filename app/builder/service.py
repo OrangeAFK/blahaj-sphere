@@ -5,6 +5,7 @@ Generic: the domain supplies the prompt, tool allow-list and MCP config (Domain.
 Build records (attempts, usage, tool calls, gate results) live in data/builds/<node dir>/, outside the node (§4.1).
 """
 
+import hashlib
 import json
 import re
 import shutil
@@ -27,6 +28,8 @@ from app.domains import Domain
 from app.llm.types import LLMError
 
 MAX_RETRIES = 2  # §7.1
+# Files that belong to the learner's progress, not to the node as built: they sit out of the way while a rescope edit is gated.
+LEARNER_FILES = ("prelab_answers.yaml", "proof", "oral.md", "debrief.md")
 TASK = "build_challenge"
 _ID_DIR = re.compile(r"^(\d{4,})-")
 _alloc_lock = threading.Lock()
@@ -59,6 +62,32 @@ class BuildPlan:
         return self.node_dir.name
 
 
+@dataclass
+class EditSpec:
+    """A Rescope `edit` (SPEC §7.3): the released node is changed in place and gated again; on failure it is restored."""
+
+    changes: str
+    backup: Path  # builds/<dir>/rescope-<ts>/ : node/ (full copy before the edit)
+    status: str
+    provisional: bool
+    prelab_fp: str
+    record_file: str
+
+
+def _round(v):
+    return float(f"{v:.6g}") if isinstance(v, float) else v
+
+
+def prelab_fingerprint(node_dir: Path) -> str:
+    """prelab.md + the prelab key (values to 6 significant digits): the learner's locked answers are scored against these,
+    so a rescope edit must not change them."""
+    key = yaml.safe_load((node_dir / "_hidden" / "prelab_key.yaml").read_text(encoding="utf-8")) or {}
+    items = [{k: _round(v) for k, v in it.items()} for it in key.get("items") or []]
+    h = hashlib.sha256((node_dir / "prelab.md").read_bytes())
+    h.update(json.dumps(items, sort_keys=True, default=str).encode("utf-8"))
+    return h.hexdigest()
+
+
 class BuildService:
     def __init__(self, data_root: Path, router, domain: Domain, max_retries: int = MAX_RETRIES):
         if domain.builder is None or domain.run_checker is None:
@@ -72,8 +101,8 @@ class BuildService:
     def builds_dir(self) -> Path:
         return self.layout.root / "builds"
 
-    def record_path(self, node_dir_name_: str) -> Path:
-        return self.builds_dir / node_dir_name_ / "record.json"
+    def record_path(self, node_dir_name_: str, file: str = "record.json") -> Path:
+        return self.builds_dir / node_dir_name_ / file
 
     # --- allocation --------------------------------------------------------------------------------
     def _next_id(self) -> int:
@@ -94,14 +123,59 @@ class BuildService:
         ctx = interleaving_context(self.layout.root, option)
         return BuildPlan(nid, d, option, ctx, datetime.now().astimezone().isoformat(timespec="seconds"))
 
-    def start(self, jobs, option: dict):
-        """Queue the build as a background job (SPEC §6.3). -> (Job, BuildPlan)."""
+    def start(self, jobs, option: dict, on_success=None):
+        """Queue the build as a background job (SPEC §6.3). -> (Job, BuildPlan). `on_success(record)` runs in the job."""
         plan = self.prepare(option)
-        job = jobs.submit(TASK, lambda handle: self.run(plan, handle), node_id=plan.name)
+
+        def job_fn(handle):
+            rec = self.run(plan, handle)
+            if on_success is not None:
+                on_success(rec)
+            return rec
+
+        job = jobs.submit(TASK, job_fn, node_id=plan.name)
         return job, plan
 
+    # --- rescope edit (SPEC §7.3) -----------------------------------------------------------------------
+    def prepare_edit(self, node_dir: Path, changes: str, starter: Path | None = None) -> tuple[BuildPlan, EditSpec]:
+        """Back the node up, take the learner's progress files out, reset workspace/ to the original starter (if known)."""
+        fm, _ = read_node_md(node_dir / "node.md")
+        option = {k: fm[k] for k in ("title", "kind", "domain", "subskills", "tier", "size_est_min")} | {"why_now": ""}
+        rec = self.load_record(node_dir.name) or {}
+        ts = int(time.time())
+        backup = self.builds_dir / node_dir.name / f"rescope-{ts}"
+        shutil.copytree(node_dir, backup / "node", ignore=shutil.ignore_patterns(".gate"))
+        for name in LEARNER_FILES:
+            p = node_dir / name
+            if p.is_dir():
+                shutil.rmtree(p)
+            elif p.exists():
+                p.unlink()
+        if starter is not None and starter.is_dir():
+            shutil.rmtree(node_dir / "workspace")
+            shutil.copytree(starter, node_dir / "workspace")
+        spec = EditSpec(changes, backup, str(fm.get("status")), bool(fm.get("provisional")), prelab_fingerprint(node_dir), f"rescope-{ts}.json")
+        plan = BuildPlan(int(fm["id"]), node_dir, option, GateContext.from_dict(rec.get("context")), datetime.now().astimezone().isoformat(timespec="seconds"))
+        return plan, spec
+
+    def start_edit(self, jobs, node_dir: Path, changes: str, starter: Path | None = None, on_success=None, on_done=None):
+        """Queue a rescope edit. `on_done()` always runs when the job ends, whether the edit passed or was rolled back."""
+        plan, spec = self.prepare_edit(node_dir, changes, starter)
+
+        def job_fn(handle):
+            try:
+                rec = self.run(plan, handle, edit=spec)
+                if on_success is not None:
+                    on_success(rec)
+                return rec
+            finally:
+                if on_done is not None:
+                    on_done()
+
+        return jobs.submit("rescope_edit", job_fn, node_id=plan.name), plan, spec
+
     # --- the build -----------------------------------------------------------------------------------
-    def prompt(self, plan: BuildPlan, gate_errors: list[str] | None) -> str:
+    def prompt(self, plan: BuildPlan, gate_errors: list[str] | None, edit: EditSpec | None = None) -> str:
         learner = learner_state(self.layout.root)
         inp = {
             "option": plan.option,
@@ -112,6 +186,18 @@ class BuildService:
         }  # fmt: skip
         assert self.domain.builder is not None
         parts = [self.domain.builder.prompt.read_text(encoding="utf-8"), "---", "## Input", "```json", json.dumps(inp, indent=1, ensure_ascii=False), "```"]
+        if edit is not None:
+            parts += [
+                "## Rescope EDIT (the node already exists)",
+                "The learner pushed back on this released node. Do NOT start over: edit the existing files in the node directory in "
+                "place and keep everything that works. Keep node.md id, slug, kind, domain, tier, size_est_min, subskills and status "
+                "exactly as they are. Do NOT change prelab.md or _hidden/prelab_key.yaml: the learner's prelab answers are locked "
+                "against them (the key values must stay the same). workspace/ has been reset to the original starter; the starter must "
+                "still FAIL the checker and workspace/ and _hidden/reference_solution/ must keep holding the same files. "
+                "The edited node goes through the full release gate again.",
+                "Changes to make:",
+                edit.changes,
+            ]
         if gate_errors:
             parts += [
                 "## Previous attempt FAILED the gate",
@@ -121,8 +207,9 @@ class BuildService:
             ]
         return "\n".join(parts) + "\n"
 
-    def run(self, plan: BuildPlan, handle=None) -> dict:
-        """Build + gate with retries. Returns the build record; raises BuildError if the node never passes."""
+    def run(self, plan: BuildPlan, handle=None, edit: EditSpec | None = None) -> dict:
+        """Build + gate with retries. Returns the build record; raises BuildError if the node never passes.
+        With `edit`, the node is changed in place; a failure restores it from the backup instead of moving it aside."""
         hooks = self.domain.builder
         assert hooks is not None and self.domain.run_checker is not None
         log = handle.log if handle else (lambda _s: None)
@@ -134,19 +221,22 @@ class BuildService:
             "node_dir": plan.name, "node_id": plan.node_id, "option": plan.option, "created": plan.created,
             "context": asdict(plan.ctx), "passed": False, "attempts": [],
         }  # fmt: skip
+        if edit is not None:
+            record |= {"edit": {"changes": edit.changes, "backup": edit.backup.relative_to(self.layout.root).as_posix()},
+                       "record_file": edit.record_file}
         t_start = time.monotonic()
         errors: list[str] | None = None
         res = GateResult()
         for n in range(1, self.max_retries + 2):
             if handle:
                 handle.progress((n - 1) / (self.max_retries + 1))
-            self._abort_if_env_down(plan, record, log, "before attempt %d" % n)
+            self._abort_if_env_down(plan, record, log, "before attempt %d" % n, edit)
             log(f"attempt {n}: {'retry with ' + str(len(errors)) + ' gate errors' if errors else 'fresh build'}")
             calls_before = _count_lines(call_log)
             t0 = time.monotonic()
             att: dict = {"n": n}
             try:
-                out = self.router.complete(TASK, [{"role": "user", "content": self.prompt(plan, errors)}], cwd=str(plan.node_dir),
+                out = self.router.complete(TASK, [{"role": "user", "content": self.prompt(plan, errors, edit)}], cwd=str(plan.node_dir),
                                            tools=hooks.tool_names(), mcp_config=str(mcp), node_id=plan.node_id)  # fmt: skip
                 att.update(backend=out.backend, model=out.model, usage=out.usage, meta=out.meta, result_tail=(out.text or "")[-800:])
             except LLMError as e:
@@ -158,14 +248,14 @@ class BuildService:
             att["tool_errors"] = sum(1 for c in calls if c.get("is_error"))
             log(f"attempt {n}: agent done in {att['agent_wall_s']:.0f} s, {len(calls)} tool calls; gating")
             record["attempts"].append(att)
-            self._abort_if_env_down(plan, record, log, "after the agent of attempt %d" % n)
+            self._abort_if_env_down(plan, record, log, "after the agent of attempt %d" % n, edit)
             record["attempts"].pop()
             t1 = time.monotonic()
             try:
                 res = run_gate(plan.node_dir, self.domain.run_checker, plan.ctx)
             except Exception as e:  # noqa: BLE001 - a gate crash is a failed attempt, not a dead job
                 res = GateResult(errors=[f"gate crashed: {e.__class__.__name__}: {e}"])
-            mismatch = self._option_mismatch(plan)
+            mismatch = self._option_mismatch(plan) + (self._edit_mismatch(plan, edit) if edit else [])
             if mismatch:
                 res.errors += mismatch
                 res.passed = False
@@ -178,7 +268,7 @@ class BuildService:
                     att["gate"] = res.to_dict()
                     record["attempts"].append(att)
                     record["aborted"] = {"when": f"fidelity review of attempt {n}", "problems": [str(e)]}
-                    self._move_aside(plan, record)
+                    self._reject(plan, record, edit)
                     raise BuildError(503, f"{e}; build aborted (try again later)") from e
                 att["review"] = rv.to_dict()
                 res.warnings += rv.warnings
@@ -202,12 +292,47 @@ class BuildService:
         record["sim_runtime_s"] = res.sim_runtime_s
         if res.passed:
             record["gate4_hits"] = self._gate4_hits(plan)
+            if edit is not None:
+                self._finish_edit(plan, edit, record)
             self._save(record)
             rebuild_db(self.layout.root)
-            log(f"node {plan.name} released in {record['wall_s']:.0f} s")
+            log(f"node {plan.name} {'edited' if edit else 'released'} in {record['wall_s']:.0f} s")
             return record
-        self._move_aside(plan, record)
+        self._reject(plan, record, edit)
         raise BuildError(502, f"node failed the release gate after {len(record['attempts'])} attempts: " + " | ".join(res.errors))
+
+    def _edit_mismatch(self, plan: BuildPlan, edit: EditSpec) -> list[str]:
+        errs = []
+        try:
+            if prelab_fingerprint(plan.node_dir) != edit.prelab_fp:
+                errs.append("rescope edit: prelab.md and _hidden/prelab_key.yaml must stay as they were (the learner's prelab answers are "
+                            "locked against them); restore them and make your changes elsewhere")  # fmt: skip
+        except (OSError, ValueError):
+            pass  # a missing/invalid file is reported by gate 0
+        return errs
+
+    def _finish_edit(self, plan: BuildPlan, edit: EditSpec, record: dict) -> None:
+        """Put the learner's progress files back and the pre-edit status; the old workspace stays in the backup."""
+        old = edit.backup / "node"
+        for name in LEARNER_FILES:
+            src, dst = old / name, plan.node_dir / name
+            if src.is_dir():
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            elif src.is_file():
+                shutil.copy2(src, dst)
+        set_frontmatter_scalar(plan.node_dir / "node.md", "status", edit.status)
+        set_frontmatter_scalar(plan.node_dir / "node.md", "provisional", edit.provisional)
+        record["learner_workspace_backup"] = (edit.backup / "node" / "workspace").relative_to(self.layout.root).as_posix()
+
+    def _reject(self, plan: BuildPlan, record: dict, edit: EditSpec | None) -> None:
+        """A build that is not released moves aside; a failed edit restores the node exactly as it was."""
+        if edit is None:
+            self._move_aside(plan, record)
+            return
+        shutil.rmtree(plan.node_dir, ignore_errors=True)
+        shutil.copytree(edit.backup / "node", plan.node_dir)
+        record["restored_from"] = edit.backup.relative_to(self.layout.root).as_posix()
+        self._save(record)
 
     def _move_aside(self, plan: BuildPlan, record: dict) -> None:
         """A node that is not released never stays in archive/nodes (it would be indexed as a real node)."""
@@ -217,7 +342,7 @@ class BuildService:
         record["moved_to"] = str(dest.relative_to(self.layout.root).as_posix())
         self._save(record)
 
-    def _abort_if_env_down(self, plan: BuildPlan, record: dict, log, when: str) -> None:
+    def _abort_if_env_down(self, plan: BuildPlan, record: dict, log, when: str, edit: EditSpec | None = None) -> None:
         """A dead toolchain (e.g. Docker stopped) is not the Builder's fault: abort instead of burning a gate retry on it
         (DECISIONS M5, Docker Desktop crashed mid-build in the acceptance run)."""
         try:
@@ -228,7 +353,7 @@ class BuildService:
             return
         record["aborted"] = {"when": when, "problems": bad}
         log(f"toolchain unavailable {when}: {bad}")
-        self._move_aside(plan, record)
+        self._reject(plan, record, edit)
         raise BuildError(503, f"toolchain unavailable {when}, build aborted (fix it and build again): " + "; ".join(bad))
 
     def abandon(self, node_dir: str) -> None:
@@ -264,7 +389,7 @@ class BuildService:
         return hits
 
     def _save(self, record: dict) -> None:
-        p = self.record_path(record["node_dir"])
+        p = self.record_path(record["node_dir"], record.get("record_file", "record.json"))
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8", newline="\n")
 
