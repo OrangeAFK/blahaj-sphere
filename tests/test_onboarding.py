@@ -238,6 +238,35 @@ def test_diagnostic_climbs_until_first_miss_and_sets_tiers(tmp_path, monkeypatch
     assert not any(r.light for r in ad.requests if r.task_type == "grade_diagnostic")
 
 
+def test_refresh_tiers_applies_the_current_cap_to_an_old_result(tmp_path, monkeypatch):
+    c = make_client(tmp_path, monkeypatch, Scripted({}))
+    finish_interview(c, tmp_path)
+    ids = freeze(c, tmp_path)
+    from app.datastore.events import append_event, new_event
+
+    for tier in (1, 2, 3):  # an old-style 3-probe pass on the first domain: used to place at T4
+        append_event(tmp_path / "events.jsonl", new_event(node_id=0, domain=ids[0], subskill=f"{ids[0]}.x", tier=tier,
+                                                         type="diagnostic_item", value=1.0, weight=1.0))
+    for d in ids[1:]:
+        append_event(tmp_path / "events.jsonl", new_event(node_id=0, domain=d, subskill=f"{d}.x", tier=1,
+                                                         type="diagnostic_item", value=0.0, weight=1.0))
+    stale = {"done": True, "pending": None, "tiers": {ids[0]: 4},
+             "domains": [{"id": d, "name": d, "probes": [], "done": True} for d in ids]}
+    (tmp_path / "profile").mkdir(exist_ok=True)
+    (tmp_path / "profile" / "diagnostic.json").write_text(json.dumps(stale), encoding="utf-8")
+    from app.routes.onboarding import get_service
+
+    class R:  # minimal Request stand-in
+        app = c.app
+
+    tiers = get_service(R).refresh_tiers()
+    assert tiers[ids[0]] == 3 and all(tiers[d] == 1 for d in ids[1:])
+    assert json.loads((tmp_path / "profile" / "diagnostic.json").read_text(encoding="utf-8"))["tiers"] == tiers
+    import sqlite3
+    assert dict(sqlite3.connect(tmp_path / "cache.db").execute("select domain, tier from scores").fetchall())[ids[0]] == 3
+    assert len((tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()) == 3 + len(ids) - 1  # events untouched
+
+
 def test_diagnostic_requires_frozen_framework(tmp_path, monkeypatch):
     c = make_client(tmp_path, monkeypatch, Scripted({}))
     assert c.post("/api/onboarding/diagnostic/next").status_code == 409

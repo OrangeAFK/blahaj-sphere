@@ -356,6 +356,16 @@ class Onboarding:
             _write_json(self.diagnostic_path, s)
         return {"score": score, "view": self.diagnostic_view()}
 
+    def refresh_tiers(self) -> dict[str, int] | None:
+        """Recompute a finished diagnostic's tiers from events.jsonl with the current engine rules (e.g. after the T3 cap),
+        and rewrite diagnostic.json, the diagnostic node and cache.db. Events are never touched."""
+        s = _read_json(self.diagnostic_path, None)
+        fw = self.frameworks.load()
+        if not s or not s.get("done") or fw is None:
+            return None
+        self._finalize(s, fw)
+        return s["tiers"]
+
     def _finalize(self, s: dict, fw: Framework) -> None:
         events, _ = read_events(self.layout.events_path)
         diag = [e for e in events if e.type == "diagnostic_item"]
