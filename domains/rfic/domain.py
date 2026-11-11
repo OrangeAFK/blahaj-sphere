@@ -7,6 +7,8 @@ from app.jobs.manager import JobManager
 from app.jobs.store import Job, JobStore, default_db_path
 from app.preflight import Check
 from domains.rfic.container import IMAGE, ContainerError, ContainerManager, PathError, default_tracks_root
+from domains.rfic.learner import learner_for
+from domains.rfic.learner import run_commands as run_learner_commands
 from domains.rfic.routes import router, start_image_build
 
 # Extracted on-disk size of the image (docker images, M0 measurement); `docker inspect .Size` only
@@ -43,7 +45,7 @@ def _node_token(containers: ContainerManager, node_dir: Path) -> str:
 
 
 def run_checker(node_dir: Path, work_rel: str, out_rel: str, timeout_s: float) -> dict:
-    """Release-gate checker runner: node_dir must be a node of some track under the mounted tracks root."""
+    """Release-gate/lab checker runner, in the Builder/checker container: node_dir must be a node of some track under the mounted tracks root."""
     from domains.rfic.tools_mcp.tools import RficTools
 
     containers = ContainerManager(default_tracks_root().resolve())
@@ -56,12 +58,13 @@ def run_checker(node_dir: Path, work_rel: str, out_rel: str, timeout_s: float) -
 
 
 def run_commands(node_dir: Path, commands: list[str], timeout_s: float, job=None) -> dict:
-    """Lab "Run simulation": node_dir must be a node of some track under the mounted tracks root."""
-    from domains.rfic.tools_mcp.tools import RficTools
-
-    containers = ContainerManager(default_tracks_root().resolve())
-    node = _node_token(containers, node_dir)
-    return RficTools(containers, None, node=node).run_commands(node, commands, timeout_s, job)
+    """Lab "Run simulation", in the LEARNER container (it mounts only this node's workspace/, never `_hidden/`)."""
+    learner = learner_for(default_tracks_root())
+    try:
+        node = learner.node_token(node_dir)
+    except PathError as e:
+        raise ContainerError(f"{node_dir} is not a node directory under {learner.tracks_root}") from e
+    return run_learner_commands(learner, node, commands, timeout_s, job)
 
 
 def _builder_mcp_config(node_dir: Path, out_path: Path, call_log: Path) -> Path:

@@ -1,9 +1,9 @@
-import json
 import os
 
 import pytest
 
-from domains.rfic.container import CONTAINER_TRACKS, ContainerError, ContainerManager, PathError, _Proc
+from domains.rfic.container import CONTAINER_TRACKS, ContainerError, ContainerManager, PathError
+from tests.helpers import DockerScript, make_dir_link
 
 
 # ---- path translation (SPEC §4.2) ----
@@ -35,10 +35,7 @@ def test_to_container_rejects_symlink_escape(fake, tracks_root, tmp_path):
     outside = tmp_path / "secret"
     outside.mkdir()
     link = tracks_root / "t1" / "archive" / "nodes" / "n1" / "link"
-    try:
-        link.symlink_to(outside, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlinks not permitted on this host")
+    make_dir_link(link, outside)
     with pytest.raises(PathError):
         fake.to_container("t1/archive/nodes/n1/link/x")
 
@@ -75,58 +72,30 @@ def test_node_token_needs_a_node_dir_of_some_track(fake, tracks_root):
 # ---- docker command construction (fake docker CLI) ----
 
 
-class ScriptedDocker(ContainerManager):
-    """Records `docker ...` argv and answers from a scripted table."""
-
+class ScriptedDocker(DockerScript, ContainerManager):
     def __init__(self, tracks_root, **kw):
-        super().__init__(tracks_root, name="t-rfic", **kw)
-        self.calls: list[tuple[str, ...]] = []
-        self.container: dict | None = None  # what `docker inspect` returns
-        self.image_ok = True
-        self.opened: list[str] = []
-        self._open_url = self.opened.append
-
-    def _docker(self, *args, input=None, timeout=60):
-        self.calls.append(args)
-        if args[0] == "image":
-            return _Proc(0 if self.image_ok else 1)
-        if args[0] == "inspect":
-            return _Proc(0, json.dumps([self.container])) if self.container else _Proc(1)
-        if args[0] == "run":
-            env = [a.split("=", 1)[1] for a in args if a.startswith(("VNC_PW=", "JUPYTER_TOKEN="))]
-            label = next(a for a in args if a.startswith("org.blahajsphere.tracks_root="))
-            self.container = {
-                "State": {"Running": True},
-                "Config": {"Labels": {"org.blahajsphere.tracks_root": label.split("=", 1)[1]}, "Env": [f"VNC_PW={env[0]}", f"JUPYTER_TOKEN={env[1]}"]},
-            }
-            return _Proc(0, "cid")
-        if args[0] == "rm":
-            self.container = None
-            return _Proc(0)
-        if args[0] == "start":
-            self.container["State"]["Running"] = True
-            return _Proc(0)
-        return _Proc(0)
+        ContainerManager.__init__(self, tracks_root, name="t-rfic", **kw)
+        DockerScript.__init__(self)
 
 
-def test_ensure_running_creates_with_single_mount_and_loopback_ports(tracks_root):
+def test_builder_container_has_one_full_tracks_mount_and_no_ports(tracks_root):
     d = ScriptedDocker(tracks_root)
     d.ensure_running()
     run = next(c for c in d.calls if c[0] == "run")
     assert run.count("-v") == 1
     assert f"{tracks_root.resolve()}:/work/tracks" in run
-    assert "127.0.0.1:6080:80" in run and "127.0.0.1:8888:8888" in run  # never exposed beyond loopback
+    assert "-p" not in run  # the GUI/Jupyter ports belong to the learner container
+    assert "org.blahajsphere.role=builder" in run
     assert run[-2:] == ("rfic:1", "--wait")
     n_before = len(d.calls)
     d.ensure_running()  # idempotent: no second `run`
     assert [c[0] for c in d.calls[n_before:]] == ["inspect"]
 
 
-def test_ensure_running_secrets_are_random_per_container(tracks_root):
+def test_ensure_running_secret_is_random_per_container(tracks_root):
     a, b = ScriptedDocker(tracks_root), ScriptedDocker(tracks_root)
     a.ensure_running(), b.ensure_running()
     assert a._env(a.container, "VNC_PW") != b._env(b.container, "VNC_PW")
-    assert len(a._env(a.container, "JUPYTER_TOKEN")) >= 24
 
 
 def test_ensure_running_starts_a_stopped_container_and_recreates_on_moved_mount(tracks_root, tmp_path):
@@ -140,6 +109,14 @@ def test_ensure_running_starts_a_stopped_container_and_recreates_on_moved_mount(
     moved.container = d.container  # container created for the old mount
     moved.ensure_running()
     assert any(c[0] == "rm" for c in moved.calls) and any(c[0] == "run" for c in moved.calls)
+
+
+def test_ensure_running_recreates_a_container_from_before_the_split(tracks_root):
+    """The old single container published 6080/8888, which the learner container now needs."""
+    d = ScriptedDocker(tracks_root)
+    d.container = {"State": {"Running": True}, "Config": {"Labels": {"org.blahajsphere.tracks_root": str(tracks_root.resolve())}, "Env": []}}
+    d.ensure_running()
+    assert [c[0] for c in d.calls if c[0] in ("rm", "run")] == ["rm", "run"]
 
 
 def test_ensure_running_without_image_gives_actionable_error(tracks_root):
@@ -170,37 +147,3 @@ def test_user_data_is_never_interpolated_into_the_shell_script(tracks_root):
     script = cmd[cmd.index("-lc") + 1]
     assert evil not in script and "sky;130" not in script  # passed as argv/env, not code
     assert evil in cmd
-
-
-def test_launch_gui_starts_tool_once_and_opens_novnc_url(tracks_root, monkeypatch):
-    d = ScriptedDocker(tracks_root)
-    spawned = []
-    monkeypatch.setattr(d, "_wait_desktop", lambda timeout=60: None)
-    monkeypatch.setattr(d, "_running", lambda pattern: bool(spawned))
-    monkeypatch.setattr(d, "_spawn", lambda argv, **kw: spawned.append((argv, kw)))
-    url = d.launch_gui("xschem", node="t1/archive/nodes/n1", pdk="sky130A")
-    assert spawned == [(["xschem"], {"workdir": "/work/tracks/t1/archive/nodes/n1/workspace", "pdk": "sky130A", "env": {"DISPLAY": ":1"}})]
-    pw = d._env(d.container, "VNC_PW")
-    assert url == f"http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale&password={pw}"
-    assert d.opened == [url]
-    d.launch_gui("xschem", node="t1/archive/nodes/n1", open_browser=False)  # already running: not started again
-    assert len(spawned) == 1 and d.opened == [url]
-    d.launch_gui("xschem", node="t1/archive/nodes/n1", file="t1/archive/nodes/n1/workspace/amp.sch")  # explicit file always opens
-    assert spawned[1][0] == ["xschem", "/work/tracks/t1/archive/nodes/n1/workspace/amp.sch"]
-    with pytest.raises(ContainerError):
-        d.launch_gui("rm -rf")
-
-
-def test_launch_jupyter_roots_at_nodes_and_returns_token_url(tracks_root, monkeypatch):
-    d = ScriptedDocker(tracks_root)
-    spawned = []
-    monkeypatch.setattr(d, "_running", lambda pattern: bool(spawned))
-    monkeypatch.setattr(d, "_http_ok", staticmethod(lambda url, timeout=3: True))
-    monkeypatch.setattr(d, "_spawn", lambda argv, **kw: spawned.append(argv))
-    url = d.launch_jupyter("t1/archive/nodes/n1")
-    tok = d._env(d.container, "JUPYTER_TOKEN")
-    assert url == f"http://127.0.0.1:8888/lab/tree/t1/archive/nodes/n1/workspace?token={tok}"
-    assert "--ServerApp.root_dir=/work/tracks" in spawned[0] and "--no-browser" in spawned[0]
-    assert f"--IdentityProvider.token={tok}" in spawned[0]  # image config disables auth unless the CLI sets it
-    d.launch_jupyter("t1/archive/nodes/n2")
-    assert len(spawned) == 1  # one JupyterLab shared by all nodes

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from domains.rfic.container import ContainerManager, ExecResult
+from domains.rfic.learner import LearnerContainer
 
 
 class FakeContainers(ContainerManager):
@@ -26,6 +27,38 @@ class FakeContainers(ContainerManager):
             on_line(line)
         if self.exec_hook:
             self.exec_hook(argv, workdir)
+        return self.next_result
+
+
+class FakeLearner(LearnerContainer):
+    """LearnerContainer with no docker: records the nodes it was bound to and the execs it ran."""
+
+    def __init__(self, tracks_root: Path):
+        super().__init__(tracks_root, name="fake-rfic-learner")
+        self.bound: list[str | None] = []
+        self.exec_calls: list[dict] = []
+        self.next_result = ExecResult(0, "", "")
+        self.exec_lines: list[str] = []
+        self.exec_hook = None  # optional callable(argv, node) run "inside the container"
+        self.opened: list[str] = []
+        self._open_url = self.opened.append
+
+    def ensure_running(self, node=None) -> None:
+        self.tracks_root.mkdir(parents=True, exist_ok=True)
+        if node:
+            self.workspace_host(node)  # same validation as the real thing
+        self.bound.append(node)
+
+    def bound_node(self):
+        return next((n for n in reversed(self.bound) if n), None)
+
+    def exec(self, argv, *, node=None, workdir=None, pdk=None, env=None, timeout=None, input=None, on_line=lambda s: None):
+        self.ensure_running(node)
+        self.exec_calls.append({"argv": argv, "node": node, "workdir": workdir, "pdk": pdk, "env": env, "timeout": timeout})
+        for line in self.exec_lines:
+            on_line(line)
+        if self.exec_hook:
+            self.exec_hook(argv, node)
         return self.next_result
 
 
@@ -67,3 +100,8 @@ def node2() -> str:
 @pytest.fixture
 def fake(tracks_root) -> FakeContainers:
     return FakeContainers(tracks_root)
+
+
+@pytest.fixture
+def fake_learner(tracks_root) -> FakeLearner:
+    return FakeLearner(tracks_root)

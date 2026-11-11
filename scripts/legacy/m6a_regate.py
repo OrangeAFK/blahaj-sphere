@@ -1,6 +1,6 @@
 """M6a (manual, LIVE): re-gate one released node with the current code gates + the fidelity review.
 
-    uv run python -m scripts.m6a_regate 0004-de-embed-a-simulated-sg13g2-hbt-from-a
+    uv run python -m scripts.legacy.m6a_regate 0004-de-embed-a-simulated-sg13g2-hbt-from-a
 """
 
 import json

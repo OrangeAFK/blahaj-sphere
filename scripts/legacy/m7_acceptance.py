@@ -1,4 +1,4 @@
-"""M7 acceptance (manual, live): voice oral exam. Run: uv run python -m scripts.m7_acceptance [--clips-dir DIR] [--skip-exam]
+"""M7 acceptance (manual, live): voice oral exam. Run: uv run python -m scripts.legacy.m7_acceptance [--clips-dir DIR] [--skip-exam]
 
 Everything that touches learner state runs on a TEMP COPY of data/ (scripts/tempdata.py); the real data/ is only read to make the copy.
 The voice models are read from the real download via BLAHAJ_MODELS_DIR.
@@ -31,7 +31,7 @@ from types import SimpleNamespace
 import numpy as np
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.voice.models import models_dir  # noqa: E402
 
@@ -132,7 +132,7 @@ def part1_mic() -> dict:
 def stt_prompt() -> str:
     from app.voice.stt import build_prompt
 
-    vocab = [ln.strip() for ln in (Path(__file__).resolve().parents[1] / "domains/rfic/vocab.txt").read_text(encoding="utf-8").splitlines() if ln.strip()]
+    vocab = [ln.strip() for ln in (Path(__file__).resolve().parents[2] / "domains/rfic/vocab.txt").read_text(encoding="utf-8").splitlines() if ln.strip()]
     return build_prompt([], vocab)
 
 

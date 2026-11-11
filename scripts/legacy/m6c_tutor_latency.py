@@ -1,6 +1,6 @@
 """M6c (manual, LIVE): first-reply latency of tutor_chat through the real router, on a temp data copy.
 
-    uv run python -m scripts.m6c_tutor_latency [N]
+    uv run python -m scripts.legacy.m6c_tutor_latency [N]
 Prints per-call seconds and model, then the median. Median > 10 s -> make claude-haiku-5-5 the tutor_chat primary.
 """
 

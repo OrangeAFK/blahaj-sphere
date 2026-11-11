@@ -2409,6 +2409,7 @@
     "/api/rfic/container/start": {
       "post": {
         "summary": "Container Start",
+        "description": "Start the Builder/checker container; the learner container starts when a learner tool needs it (it needs a node).",
         "operationId": "startRficContainer",
         "responses": {
           "200": {
@@ -2445,7 +2446,7 @@
     "/api/rfic/gui": {
       "post": {
         "summary": "Launch Gui",
-        "description": "Start a GUI tool on the container's VNC display and open noVNC in the system browser.",
+        "description": "Start a GUI tool on the learner container's VNC display (it mounts only `node`'s workspace/) and open noVNC in the system browser.",
         "operationId": "launchRficGui",
         "requestBody": {
           "content": {
@@ -2484,6 +2485,7 @@
     "/api/rfic/jupyter": {
       "post": {
         "summary": "Launch Jupyter",
+        "description": "JupyterLab in the learner container, rooted at `node`'s workspace/ (the only directory it can see).",
         "operationId": "launchRficJupyter",
         "requestBody": {
           "content": {
@@ -2540,7 +2542,7 @@
     "/api/rfic/run": {
       "post": {
         "summary": "Run Sim",
-        "description": "Run a sim as a job (streams to /api/jobs/stream). Path rules as for the MCP tools, pinned to `node`.",
+        "description": "Builder/dev tool (the UI does not call it): run a sim as a job in the Builder container, which also sees `_hidden/`.\nPath rules as for the MCP tools, pinned to `node`. The learner's Run simulation is the lifecycle `run_commands`, in the learner container.",
         "operationId": "runRficSim",
         "requestBody": {
           "content": {
@@ -2872,13 +2874,8 @@
             "type": "string",
             "title": "Tracks Root"
           },
-          "gui_port": {
-            "type": "integer",
-            "title": "Gui Port"
-          },
-          "jupyter_port": {
-            "type": "integer",
-            "title": "Jupyter Port"
+          "learner": {
+            "$ref": "#/components/schemas/LearnerStatus"
           }
         },
         "type": "object",
@@ -2888,10 +2885,10 @@
           "container",
           "running",
           "tracks_root",
-          "gui_port",
-          "jupyter_port"
+          "learner"
         ],
-        "title": "ContainerStatus"
+        "title": "ContainerStatus",
+        "description": "The Builder/checker container (mounts all of data/tracks) and the learner container (one node's workspace/)."
       },
       "CreateBody": {
         "properties": {
@@ -3512,6 +3509,46 @@
           "node"
         ],
         "title": "JupyterRequest"
+      },
+      "LearnerStatus": {
+        "properties": {
+          "container": {
+            "type": "string",
+            "title": "Container"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "gui_port": {
+            "type": "integer",
+            "title": "Gui Port"
+          },
+          "jupyter_port": {
+            "type": "integer",
+            "title": "Jupyter Port"
+          }
+        },
+        "type": "object",
+        "required": [
+          "container",
+          "running",
+          "node",
+          "gui_port",
+          "jupyter_port"
+        ],
+        "title": "LearnerStatus"
       },
       "NodeSummary": {
         "properties": {

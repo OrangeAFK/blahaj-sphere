@@ -1,5 +1,5 @@
 from app.builder.gate import GateResult
-from scripts.m25_builder_spike import SPECS, Attempt, build_prompt, run_with_retries, sum_usage
+from scripts.legacy.m25_builder_spike import SPECS, Attempt, build_prompt, run_with_retries, sum_usage
 
 
 def _fake(results):

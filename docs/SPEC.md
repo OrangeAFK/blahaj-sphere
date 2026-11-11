@@ -128,7 +128,11 @@ data/
 ```
 
 ### 4.2 Container paths
-One long-lived container per domain image mounts `data/tracks` → `/work/tracks` once. Per-node commands use `workdir=/work/tracks/<track>/archive/nodes/<dir>/workspace`. All host↔container path translation lives in one function `to_container(path)`/`to_host(path)`; MCP tools accept host-relative node paths and translate.
+Two containers of the domain image, so that nothing a learner tool can reach contains an answer key:
+- **Builder/checker container** (`blahaj-rfic`; Builder MCP tools, `run_checker`, the release gate): mounts `data/tracks` → `/work/tracks` once, so it sees every track's nodes including `_hidden/`. Per-node commands use `workdir=/work/tracks/<track>/archive/nodes/<dir>/workspace`. No published ports. Never used for learner tools.
+- **Learner container** (`blahaj-rfic-learner`; JupyterLab, Xschem, KLayout, Qucs-S, Run simulation): mounts ONLY the active node's `workspace/` → `/work/workspace` (one bind mount, nothing else; no `_hidden/`, no node files, no other node or track). It is recreated whenever another node becomes active (label `org.blahajsphere.learner_node`; the switch is refused while a simulation is running in it), so Jupyter's root, its terminals and the GUI file dialogs see only that workspace. Per-node commands use `workdir=/work/workspace`. It owns the published ports (loopback only: noVNC 6080, Jupyter 8888).
+
+Host↔container path translation lives in one place per container: `ContainerManager.to_container(path)`/`to_host(path)` (Builder; MCP tools accept host-relative node paths and translate) and `LearnerContainer.to_container(node, path)` (learner; accepts a container path, a host path or a path relative to the node directory, and refuses anything that does not end up inside that node's `workspace/`, symlinks and `..` included). A node is named by its token `<track>/archive/nodes/<dir>`.
 
 ### 4.3 SQLite (cache `data/cache.db`, rebuildable from files + events.jsonl + misconceptions.jsonl via `rebuild_db`)
 `tracks`, `nodes`, `subskills`, `scores`, `tiers`, `misconceptions`, `library_chunks`(book_id, page, text, embedding blob). Every node/score/tier/misconception/subskill row carries `track`. Operational, not rebuildable, kept in separate files (`llm.db`, `jobs.db`): `llm_calls`, `jobs`, `grading_queue`, cooldowns.
@@ -240,8 +244,8 @@ Stored `value` is the base value; modifiers (§8.2) apply at scoring time. `trac
 
 ### 6.1 Image
 - `rfic:1` built **FROM IIC-OSIC-TOOLS** (`hpretl/iic-osic-tools`) **[VERIFY includes ngspice, Xschem, KLayout, openEMS, Qucs-S, sky130 + IHP SG13G2 PDKs; add missing tools in Dockerfile; record image size and disk free]**. Add: scikit-rf, numpy, matplotlib, jupyterlab.
-- GUI tools launched **externally**: default the image's noVNC in the system browser **[VERIFY port/flag]**; alternative X11 via WSLg. Pick what works at M0.
-- JupyterLab in container, opened in system browser at the node workspace.
+- GUI tools launched **externally** from the **learner container** (§4.2): the image's noVNC in the system browser (port 6080). Alternative X11 via WSLg. Pick what works at M0.
+- JupyterLab in the **learner container**, rooted at the mounted workspace (`/work/workspace`, the only directory it can see), opened in the system browser. The Builder/checker container launches no GUI tool or Jupyter and publishes no ports.
 - **[VERIFY at M0]** openEMS performance on a Windows-path bind mount vs. a WSL2-native path; if > 2× slower, place `data/` inside the WSL2 filesystem and record it.
 
 ### 6.2 MCP server (`domains/rfic/tools_mcp/`, stdio, heavy agents only)
@@ -411,6 +415,7 @@ Free models may log prompts; textbook equations degrade in extraction; Builder q
 | M6a–d | Lifecycle backend, UI, fixes (run simulation, persisted checker results, scores/caps APIs), markdown rendering | 0, 3.1, 5, 7.2–7.5, 7.7, 11 | Node completable in text mode; tutor leaks no `_hidden` value in 5 adversarial prompts — **done** |
 | M7 | Voice oral + grading | 0, 5.4, 5.7, 7.6 | Transcribes 15 s utterance in < 5 s on CPU; RFIC terms in vocab transcribed correctly in 8/10 test clips; grades valid JSON with quotes |
 | M7.5 | Tracks (§8.6) + migration; make all existing flows (incl. M7 oral: events, misconceptions, remediation) track-aware | 0, 4, 5.1, 5.8, 8, 11 | Migration reproduces identical scores; second track created on temp copy; switching changes Home/graph/scores/Planner inputs and leaves the other track untouched; archive/reset/delete/restore/purge work |
+| M7.6 | Learner/builder container split (§4.2, §6.1): learner tools see only the active node's `workspace/` | 0, 4.2, 6 | A test over every file under the tracks root: no learner path reaches a `_hidden/` or another node; on real Docker the learner container holds no `_hidden`/node file and a node switch swaps the mount |
 | M8 | Planner, difficulty control, remediation, misconception resolution, graph | 0, 5.6, 7.7, 11 | Oral fail spawns remediation child; misconception reappears in a later node and resolves; graph renders |
 | M9 | Library | 0, 10 | 300-page PDF ingests locally; Builder cites pages |
 | M10 | Tier exams + polish | 0, 8.4, 11 | Tier-up from seeded events works end-to-end |

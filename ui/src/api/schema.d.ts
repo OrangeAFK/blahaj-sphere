@@ -1087,7 +1087,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Container Start */
+        /**
+         * Container Start
+         * @description Start the Builder/checker container; the learner container starts when a learner tool needs it (it needs a node).
+         */
         post: operations["startRficContainer"];
         delete?: never;
         options?: never;
@@ -1123,7 +1126,7 @@ export interface paths {
         put?: never;
         /**
          * Launch Gui
-         * @description Start a GUI tool on the container's VNC display and open noVNC in the system browser.
+         * @description Start a GUI tool on the learner container's VNC display (it mounts only `node`'s workspace/) and open noVNC in the system browser.
          */
         post: operations["launchRficGui"];
         delete?: never;
@@ -1141,7 +1144,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Launch Jupyter */
+        /**
+         * Launch Jupyter
+         * @description JupyterLab in the learner container, rooted at `node`'s workspace/ (the only directory it can see).
+         */
         post: operations["launchRficJupyter"];
         delete?: never;
         options?: never;
@@ -1177,7 +1183,8 @@ export interface paths {
         put?: never;
         /**
          * Run Sim
-         * @description Run a sim as a job (streams to /api/jobs/stream). Path rules as for the MCP tools, pinned to `node`.
+         * @description Builder/dev tool (the UI does not call it): run a sim as a job in the Builder container, which also sees `_hidden/`.
+         *     Path rules as for the MCP tools, pinned to `node`. The learner's Run simulation is the lifecycle `run_commands`, in the learner container.
          */
         post: operations["runRficSim"];
         delete?: never;
@@ -1290,7 +1297,10 @@ export interface components {
             /** Detail */
             detail?: string | null;
         };
-        /** ContainerStatus */
+        /**
+         * ContainerStatus
+         * @description The Builder/checker container (mounts all of data/tracks) and the learner container (one node's workspace/).
+         */
         ContainerStatus: {
             /** Image */
             image: string;
@@ -1302,10 +1312,7 @@ export interface components {
             running: boolean;
             /** Tracks Root */
             tracks_root: string;
-            /** Gui Port */
-            gui_port: number;
-            /** Jupyter Port */
-            jupyter_port: number;
+            learner: components["schemas"]["LearnerStatus"];
         };
         /** CreateBody */
         CreateBody: {
@@ -1532,6 +1539,19 @@ export interface components {
              * @default true
              */
             open_browser: boolean;
+        };
+        /** LearnerStatus */
+        LearnerStatus: {
+            /** Container */
+            container: string;
+            /** Running */
+            running: boolean;
+            /** Node */
+            node: string | null;
+            /** Gui Port */
+            gui_port: number;
+            /** Jupyter Port */
+            jupyter_port: number;
         };
         /** NodeSummary */
         NodeSummary: {

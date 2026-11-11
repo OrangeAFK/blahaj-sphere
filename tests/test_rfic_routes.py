@@ -5,14 +5,15 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from domains.rfic.container import ContainerError, ExecResult
-from domains.rfic.routes import get_containers
+from domains.rfic.routes import get_containers, get_learner
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch, fake):
+def client(tmp_path, monkeypatch, fake, fake_learner):
     monkeypatch.setenv("BLAHAJ_DATA_DIR", str(tmp_path / "data"))
     app = create_app()
     app.dependency_overrides[get_containers] = lambda: fake
+    app.dependency_overrides[get_learner] = lambda: fake_learner
     with TestClient(app) as c:
         yield c
 
@@ -58,19 +59,40 @@ def test_run_route_cannot_leave_the_node(client):
     assert client.post("/api/rfic/run", json={"tool": "bash", "node": "t1/archive/nodes/n1", "path": "x"}).status_code == 422
 
 
-def test_gui_and_jupyter_routes(client, fake, monkeypatch):
-    monkeypatch.setattr(fake, "launch_gui", lambda tool, **kw: f"http://x/{tool}/{kw['node']}/{kw['file']}")
-    monkeypatch.setattr(fake, "launch_jupyter", lambda node, **kw: f"http://j/{node}")
-    assert client.post("/api/rfic/gui", json={"tool": "xschem", "node": "t1/archive/nodes/n1", "file": "workspace/a.sch"}).json() == {"url": "http://x/xschem/t1/archive/nodes/n1/t1/archive/nodes/n1/workspace/a.sch"}
+def test_gui_and_jupyter_routes_go_to_the_learner_container(client, fake, fake_learner, monkeypatch):
+    monkeypatch.setattr(fake_learner, "launch_gui", lambda tool, **kw: f"http://x/{tool}/{kw['node']}/{kw['file']}")
+    monkeypatch.setattr(fake_learner, "launch_jupyter", lambda node, **kw: f"http://j/{node}")
+    monkeypatch.setattr(fake, "launch_gui", lambda *a, **k: pytest.fail("the Builder container has no learner tools"), raising=False)
+    assert client.post("/api/rfic/gui", json={"tool": "xschem", "node": "t1/archive/nodes/n1", "file": "workspace/a.sch"}).json() == {"url": "http://x/xschem/t1/archive/nodes/n1/workspace/a.sch"}
     assert client.post("/api/rfic/jupyter", json={"node": "t1/archive/nodes/n1"}).json() == {"url": "http://j/t1/archive/nodes/n1"}
     assert client.post("/api/rfic/gui", json={"tool": "emacs"}).status_code == 422
 
     def boom(*a, **k):
         raise ContainerError("docker not found")
 
-    monkeypatch.setattr(fake, "launch_gui", boom)
+    monkeypatch.setattr(fake_learner, "launch_gui", boom)
     r = client.post("/api/rfic/gui", json={"tool": "xschem"})
     assert r.status_code == 400 and "docker not found" in r.json()["detail"]
+
+
+def test_gui_route_resolves_a_bare_node_dir_in_the_active_track_and_refuses_hidden(client, fake_learner, monkeypatch):
+    monkeypatch.setattr("app.tracks.scope.current_scope", lambda: type("S", (), {"track": "t1"})())
+    monkeypatch.setattr(fake_learner, "_wait_desktop", lambda timeout=60: None, raising=False)
+    monkeypatch.setattr(fake_learner, "_running", lambda p: False, raising=False)
+    monkeypatch.setattr(fake_learner, "_spawn", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(fake_learner, "gui_url", lambda: "http://novnc", raising=False)
+    ok = client.post("/api/rfic/gui", json={"tool": "xschem", "node": "n1", "file": "workspace/a.sch", "open_browser": False})
+    assert ok.status_code == 200 and fake_learner.bound_node() == "t1/archive/nodes/n1"
+    for bad in ("_hidden/prelab_key.yaml", "workspace/../_hidden/oral_key.yaml", "../n2/workspace/a.sch"):
+        r = client.post("/api/rfic/gui", json={"tool": "xschem", "node": "n1", "file": bad, "open_browser": False})
+        assert r.status_code == 400 and "outside the workspace" in r.json()["detail"], bad
+
+
+def test_container_status_reports_both_containers(client, fake, fake_learner, monkeypatch):
+    monkeypatch.setattr(fake, "status", lambda: {"image": "rfic:1", "image_present": True, "container": "b", "running": True, "tracks_root": "/t"})
+    monkeypatch.setattr(fake_learner, "status", lambda: {"container": "l", "running": False, "node": None, "gui_port": 6080, "jupyter_port": 8888})
+    body = client.get("/api/rfic/container").json()
+    assert body["container"] == "b" and body["learner"] == {"container": "l", "running": False, "node": None, "gui_port": 6080, "jupyter_port": 8888}
 
 
 def test_image_build_route_runs_a_job(client, fake, monkeypatch):

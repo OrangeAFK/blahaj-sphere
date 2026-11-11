@@ -1,7 +1,7 @@
 """M5.1 (manual, LIVE): rebuild released nodes under the stricter gate (provenance, starter hard fail, fidelity review).
 
-    uv run python -m scripts.m51_rebuild 0001-extract-l-q-and-self-resonance-of-an 0003-extract-60-ghz-gsg-pad-parasitics-with
-    uv run python -m scripts.m51_rebuild --review-only 0004-de-embed-a-simulated-sg13g2-hbt-from-a
+    uv run python -m scripts.legacy.m51_rebuild 0001-extract-l-q-and-self-resonance-of-an 0003-extract-60-ghz-gsg-pad-parasitics-with
+    uv run python -m scripts.legacy.m51_rebuild --review-only 0004-de-embed-a-simulated-sg13g2-hbt-from-a
 
 Each original is marked `abandoned` (kept on disk) and its stored option is built again as a new node through the
 background job. --review-only runs just the fidelity review on an existing node (informational, nothing changes).
@@ -21,7 +21,7 @@ from app.jobs.manager import JobManager
 from app.jobs.store import JobStore, default_db_path
 from app.llm.router import Router
 from app.settings import data_dir
-from scripts.m5_acceptance import log, summarize
+from scripts.legacy.m5_acceptance import log, summarize
 
 
 def review_summary(rec: dict) -> list[dict]:

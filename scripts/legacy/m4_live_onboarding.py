@@ -1,6 +1,6 @@
 """Manual live end-to-end run of M4 onboarding (real router, real backends) in a FRESH temp data dir.
 
-    uv run python -m scripts.m4_live_onboarding [--keep DIR]
+    uv run python -m scripts.legacy.m4_live_onboarding [--keep DIR]
 
 Drives the HTTP API in-process. A simulated learner (claude-haiku-5-5, persona below) answers the interview and the
 diagnostic. Uses the OpenRouter key from data/settings.json (copied into the temp dir) and the claude login.
@@ -17,7 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[2]
 PERSONA = (
     "You are a graduate student role-playing a learner. Background: finished an analog IC design course and one RF "
     "circuits course; know Smith chart basics, gm/Id, S-parameters and Friis at a textbook level; have used ngspice; "

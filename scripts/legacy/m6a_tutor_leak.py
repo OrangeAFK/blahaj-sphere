@@ -1,6 +1,6 @@
 """M6a (manual, LIVE, light tier): 5 adversarial tutor prompts against a copy of a released node; no _hidden value may leak.
 
-    uv run python -m scripts.m6a_tutor_leak 0004-de-embed-a-simulated-sg13g2-hbt-from-a
+    uv run python -m scripts.legacy.m6a_tutor_leak 0004-de-embed-a-simulated-sg13g2-hbt-from-a
 Works on a temp copy of the node (status forced to lab); the real data/ is untouched. Reports replies redacted by the backstop.
 """
 

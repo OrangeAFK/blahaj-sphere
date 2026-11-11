@@ -1,8 +1,12 @@
-"""Long-lived `rfic:1` container (SPEC §4.2, §6.1): one bind mount, one path-translation pair,
-`docker exec` for tools, noVNC for GUI tools, JupyterLab for notebooks.
+"""`rfic:1` containers (SPEC §4.2, §6.1). Two roles share the docker plumbing in `DockerContainer`:
+
+- `ContainerManager`: the Builder/checker container. One bind mount (data/tracks, everything incl. `_hidden/`),
+  one path-translation pair, `docker exec` for the MCP tools, the checker and the release gate. No ports.
+- `domains.rfic.learner.LearnerContainer`: the learner tools (Jupyter, noVNC GUIs, Run simulation). It mounts ONLY the
+  active node's `workspace/`.
 
 Only the `docker` CLI is used (no SDK dependency). Everything that touches docker goes through
-`ContainerManager._docker`, which tests replace with a fake.
+`DockerContainer._docker`, which tests replace with a fake.
 """
 
 import json
@@ -20,20 +24,11 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 IMAGE = "rfic:1"
-CONTAINER = "blahaj-rfic"
-CONTAINER_TRACKS = "/work/tracks"  # data/tracks is the one bind mount (SPEC §4.2); a node lives at <track>/archive/nodes/<dir>
-GUI_PORT = 6080  # host port -> noVNC (container :80)
-JUPYTER_PORT = 8888
-DISPLAY = ":1"
+CONTAINER = "blahaj-rfic"  # Builder/checker container
+CONTAINER_TRACKS = "/work/tracks"  # data/tracks is the Builder container's one bind mount (SPEC §4.2); a node lives at <track>/archive/nodes/<dir>
+ROLE_LABEL = "org.blahajsphere.role"
+TRACKS_LABEL = "org.blahajsphere.tracks_root"
 MAX_CAPTURE = 4_000_000
-
-# GUI tool name -> argv. `file` (if given) is appended as a container path.
-GUI_TOOLS: dict[str, list[str]] = {
-    "xschem": ["xschem"],
-    "klayout": ["klayout", "-e"],
-    "qucs-s": ["qucs-s"],
-    "desktop": [],  # just the XFCE desktop in noVNC
-}
 
 
 class ContainerError(RuntimeError):
@@ -41,7 +36,7 @@ class ContainerError(RuntimeError):
 
 
 class PathError(ValueError):
-    """A path escaped (or never was inside) the mounted tracks directory."""
+    """A path escaped (or never was inside) the directory a container mounts."""
 
 
 @dataclass
@@ -64,88 +59,27 @@ def _noop(_line: str) -> None:
     pass
 
 
-class ContainerManager:
-    def __init__(
-        self,
-        tracks_root: Path,
-        *,
-        image: str = IMAGE,
-        name: str = CONTAINER,
-        gui_port: int = GUI_PORT,
-        jupyter_port: int = JUPYTER_PORT,
-        docker: str = "docker",
-        open_url: Callable[[str], object] | None = None,
-    ):
-        self.tracks_root = Path(tracks_root)
+def parse_node_token(token: str) -> tuple[str, str]:
+    """`<track>/archive/nodes/<dir>` -> (track, dir). PathError for anything else (extra/missing parts, `.`/`..`, backslashes)."""
+    parts = token.split("/")
+    if len(parts) != 4 or parts[1:3] != ["archive", "nodes"] or any(p in ("", ".", "..") or "\\" in p or "\0" in p for p in parts):
+        raise PathError(f"not a node token <track>/archive/nodes/<dir>: {token!r}")
+    return parts[0], parts[3]
+
+
+class DockerContainer:
+    """Docker plumbing shared by both roles: inspect/start/stop/remove, image build, `docker exec`, detached spawns, URL helpers."""
+
+    ROLE = ""
+
+    def __init__(self, *, image: str, name: str, docker: str = "docker", open_url: Callable[[str], object] | None = None):
         self.image, self.name = image, name
-        self.gui_port, self.jupyter_port = gui_port, jupyter_port
         self.docker_bin = docker
         self._open_url = open_url
         self._lock = threading.RLock()
 
-    # ---- path translation (the only place host <-> container paths are converted) ----
-
-    def to_container(self, path: str | os.PathLike) -> str:
-        """Host path (absolute, or relative to the tracks root) or container path -> container path.
-
-        Raises PathError if the result would not lie inside /work/tracks."""
-        raw = os.fspath(path)
-        if raw == CONTAINER_TRACKS or raw.startswith(CONTAINER_TRACKS + "/"):
-            rel = posixpath.relpath(posixpath.normpath(raw), CONTAINER_TRACKS)
-        else:
-            root = self.tracks_root.resolve()
-            p = Path(raw)
-            full = (p if p.is_absolute() else root / p).resolve()  # resolves symlinks and ..
-            try:
-                rel = full.relative_to(root).as_posix()
-            except ValueError:
-                raise PathError(f"path outside the tracks directory: {raw}") from None
-        if rel == ".." or rel.startswith("../"):
-            raise PathError(f"path outside the tracks directory: {raw}")
-        return CONTAINER_TRACKS if rel == "." else f"{CONTAINER_TRACKS}/{rel}"
-
-    def to_host(self, container_path: str) -> Path:
-        norm = posixpath.normpath(container_path)
-        if norm != CONTAINER_TRACKS and not norm.startswith(CONTAINER_TRACKS + "/"):
-            raise PathError(f"not a tracks path in the container: {container_path}")
-        rel = posixpath.relpath(norm, CONTAINER_TRACKS)
-        root = self.tracks_root.resolve()
-        return root if rel == "." else root.joinpath(*PurePosixPath(rel).parts)
-
-    @staticmethod
-    def node_of(container_path: str) -> str:
-        """The node a container path belongs to: `<track>/archive/nodes/<dir>` (the first four components under /work/tracks).
-        This token is how every tool and job names a node."""
-        rel = posixpath.relpath(container_path, CONTAINER_TRACKS)
-        parts = rel.split("/")
-        if rel == "." or rel.startswith("..") or len(parts) < 4 or parts[1:3] != ["archive", "nodes"]:
-            raise PathError(f"not inside a node directory: {container_path}")
-        return "/".join(parts[:4])
-
-    @staticmethod
-    def is_node_dir(container_path: str) -> bool:
-        """True for exactly `/work/tracks/<track>/archive/nodes/<dir>`."""
-        try:
-            return container_path == f"{CONTAINER_TRACKS}/{ContainerManager.node_of(container_path)}"
-        except PathError:
-            return False
-
-    @staticmethod
-    def workspace_of(node: str) -> str:
-        return f"{CONTAINER_TRACKS}/{node}/workspace"
-
-    @staticmethod
-    def job_label(node: str) -> str:
-        """`<track>/archive/nodes/<dir>` -> `<track>/<dir>`, the label jobs carry (DataLayout.job_label)."""
-        parts = node.split("/")
-        return f"{parts[0]}/{parts[-1]}"
-
-    def node_token(self, node_dir: str | os.PathLike) -> str:
-        """Host node directory -> its node token; PathError unless it is `<tracks_root>/<track>/archive/nodes/<dir>`."""
-        c = self.to_container(node_dir)
-        if not self.is_node_dir(c):
-            raise PathError(f"not a node directory under {self.tracks_root}: {node_dir}")
-        return self.node_of(c)
+    def ensure_running(self) -> None:
+        raise NotImplementedError
 
     # ---- docker plumbing ----
 
@@ -180,42 +114,29 @@ class ContainerManager:
         return bool(info and info["State"]["Running"])
 
     @staticmethod
+    def _label(info: dict | None, key: str) -> str | None:
+        return ((info or {}).get("Config", {}).get("Labels") or {}).get(key)
+
+    @staticmethod
     def _env(info: dict, key: str) -> str:
         for e in info["Config"]["Env"]:
             if e.startswith(key + "="):
                 return e.split("=", 1)[1]
         raise ContainerError(f"{key} missing from container env; recreate it with remove()")
 
-    def ensure_running(self) -> None:
-        """Create/start the container; idempotent. Recreates it if the tracks mount moved (or it still has the pre-tracks nodes mount)."""
-        with self._lock:
-            self.tracks_root.mkdir(parents=True, exist_ok=True)
-            root = str(self.tracks_root.resolve())
-            info = self._inspect()
-            if info is not None and (info["Config"].get("Labels") or {}).get("org.blahajsphere.tracks_root") != root:
-                self.remove()
-                info = None
-            if info is None:
-                if not self.image_present():
-                    raise ContainerError(f"image {self.image} not found; run the image build job (preflight fix)")
-                r = self._docker(
-                    "run", "-d", "--name", self.name,
-                    "--shm-size", "1g",
-                    "-p", f"127.0.0.1:{self.gui_port}:80",
-                    "-p", f"127.0.0.1:{self.jupyter_port}:8888",
-                    "-e", f"VNC_PW={secrets.token_urlsafe(9)}",
-                    "-e", f"JUPYTER_TOKEN={secrets.token_urlsafe(24)}",
-                    "-l", f"org.blahajsphere.tracks_root={root}",
-                    "-v", f"{root}:{CONTAINER_TRACKS}",
-                    self.image, "--wait",
-                    timeout=120,
-                )  # fmt: skip
-                if r.returncode != 0:
-                    raise ContainerError(f"docker run failed: {r.stderr.strip()}")
-            elif not info["State"]["Running"]:
-                r = self._docker("start", self.name, timeout=60)
-                if r.returncode != 0:
-                    raise ContainerError(f"docker start failed: {r.stderr.strip()}")
+    def _run_new(self, *args: str, timeout: float = 120) -> None:
+        """`docker run -d` a fresh container of this role (the image must exist)."""
+        if not self.image_present():
+            raise ContainerError(f"image {self.image} not found; run the image build job (preflight fix)")
+        r = self._docker("run", "-d", "--name", self.name, "--shm-size", "1g", "-l", f"{ROLE_LABEL}={self.ROLE}", *args, timeout=timeout)
+        if r.returncode != 0:
+            raise ContainerError(f"docker run failed: {r.stderr.strip()}")
+
+    def _start_stopped(self, info: dict) -> None:
+        if not info["State"]["Running"]:
+            r = self._docker("start", self.name, timeout=60)
+            if r.returncode != 0:
+                raise ContainerError(f"docker start failed: {r.stderr.strip()}")
 
     def stop(self) -> None:
         with self._lock:
@@ -224,18 +145,6 @@ class ContainerManager:
     def remove(self) -> None:
         with self._lock:
             self._docker("rm", "-f", self.name, timeout=60)
-
-    def status(self) -> dict:
-        info = self._inspect()
-        return {
-            "image": self.image,
-            "image_present": self.image_present(),
-            "container": self.name,
-            "running": bool(info and info["State"]["Running"]),
-            "tracks_root": str(self.tracks_root.resolve()),
-            "gui_port": self.gui_port,
-            "jupyter_port": self.jupyter_port,
-        }
 
     # ---- image build ----
 
@@ -373,23 +282,6 @@ class ContainerManager:
     def _running(self, pattern: str) -> bool:
         return self._docker("exec", self.name, "pgrep", "-f", pattern, timeout=20).returncode == 0
 
-    # ---- GUI (noVNC) ----
-
-    def gui_url(self) -> str:
-        info = self._inspect()
-        if info is None:
-            raise ContainerError("container not created")
-        pw = self._env(info, "VNC_PW")
-        return f"http://127.0.0.1:{self.gui_port}/vnc.html?autoconnect=true&resize=scale&password={pw}"
-
-    def _wait_desktop(self, timeout: float = 60) -> None:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self._running("Xtigervnc") and self._http_ok(f"http://127.0.0.1:{self.gui_port}/vnc.html"):
-                return
-            time.sleep(1)
-        raise ContainerError(f"noVNC desktop did not come up in time (docker logs {self.name})")
-
     @staticmethod
     def _http_ok(url: str, timeout: float = 3) -> bool:
         try:
@@ -400,58 +292,6 @@ class ContainerManager:
         except (urllib.error.URLError, OSError):
             return False
 
-    def launch_gui(
-        self,
-        tool: str = "xschem",
-        node: str | None = None,
-        file: str | None = None,
-        pdk: str | None = None,
-        open_browser: bool = True,
-    ) -> str:
-        """Start a GUI tool on the container's VNC display and open noVNC in the system browser."""
-        if tool not in GUI_TOOLS:
-            raise ContainerError(f"unknown GUI tool {tool!r}; choose from {sorted(GUI_TOOLS)}")
-        self.ensure_running()
-        self._wait_desktop()
-        argv = list(GUI_TOOLS[tool])
-        if file:
-            argv.append(self.to_container(file))
-        if argv and (file or not self._running(f"^{argv[0]}")):
-            workdir = self.workspace_of(node) if node else None
-            self._spawn(argv, workdir=workdir, pdk=pdk, env={"DISPLAY": DISPLAY})
-        url = self.gui_url()
-        if open_browser:
-            self._open(url)
-        return url
-
-    # ---- JupyterLab ----
-
-    def launch_jupyter(self, node: str, open_browser: bool = True) -> str:
-        """Ensure one JupyterLab (rooted at /work/tracks) is running; return the URL for the node workspace."""
-        self.ensure_running()
-        info = self._inspect()
-        token = self._env(info, "JUPYTER_TOKEN")  # type: ignore[arg-type]
-        base = f"http://127.0.0.1:{self.jupyter_port}"
-        if not self._running("jupyter-lab"):
-            # The image's ~/.jupyter config sets token='' (auth off) and beats the JUPYTER_TOKEN env var,
-            # so the token must be given on the command line, which beats config files.
-            self._spawn(
-                [
-                    "jupyter-lab", "--ip=0.0.0.0", "--port=8888", "--no-browser",
-                    f"--ServerApp.root_dir={CONTAINER_TRACKS}", f"--IdentityProvider.token={token}",
-                ],
-                workdir=CONTAINER_TRACKS,
-            )  # fmt: skip
-        deadline = time.monotonic() + 60
-        while not self._http_ok(f"{base}/api"):
-            if time.monotonic() > deadline:
-                raise ContainerError("JupyterLab did not come up in time")
-            time.sleep(1)
-        url = f"{base}/lab/tree/{node}/workspace?token={token}"
-        if open_browser:
-            self._open(url)
-        return url
-
     def _open(self, url: str) -> None:
         if self._open_url is not None:
             self._open_url(url)
@@ -459,6 +299,116 @@ class ContainerManager:
             import webbrowser
 
             webbrowser.open(url)
+
+
+class ContainerManager(DockerContainer):
+    """The Builder/checker container: mounts the whole tracks directory (incl. every `_hidden/`). Never used for learner tools."""
+
+    ROLE = "builder"
+
+    def __init__(
+        self,
+        tracks_root: Path,
+        *,
+        image: str = IMAGE,
+        name: str = CONTAINER,
+        docker: str = "docker",
+        open_url: Callable[[str], object] | None = None,
+    ):
+        super().__init__(image=image, name=name, docker=docker, open_url=open_url)
+        self.tracks_root = Path(tracks_root)
+
+    # ---- path translation (the only place host <-> container paths are converted) ----
+
+    def to_container(self, path: str | os.PathLike) -> str:
+        """Host path (absolute, or relative to the tracks root) or container path -> container path.
+
+        Raises PathError if the result would not lie inside /work/tracks."""
+        raw = os.fspath(path)
+        if raw == CONTAINER_TRACKS or raw.startswith(CONTAINER_TRACKS + "/"):
+            rel = posixpath.relpath(posixpath.normpath(raw), CONTAINER_TRACKS)
+        else:
+            root = self.tracks_root.resolve()
+            p = Path(raw)
+            full = (p if p.is_absolute() else root / p).resolve()  # resolves symlinks and ..
+            try:
+                rel = full.relative_to(root).as_posix()
+            except ValueError:
+                raise PathError(f"path outside the tracks directory: {raw}") from None
+        if rel == ".." or rel.startswith("../"):
+            raise PathError(f"path outside the tracks directory: {raw}")
+        return CONTAINER_TRACKS if rel == "." else f"{CONTAINER_TRACKS}/{rel}"
+
+    def to_host(self, container_path: str) -> Path:
+        norm = posixpath.normpath(container_path)
+        if norm != CONTAINER_TRACKS and not norm.startswith(CONTAINER_TRACKS + "/"):
+            raise PathError(f"not a tracks path in the container: {container_path}")
+        rel = posixpath.relpath(norm, CONTAINER_TRACKS)
+        root = self.tracks_root.resolve()
+        return root if rel == "." else root.joinpath(*PurePosixPath(rel).parts)
+
+    @staticmethod
+    def node_of(container_path: str) -> str:
+        """The node a container path belongs to: `<track>/archive/nodes/<dir>` (the first four components under /work/tracks).
+        This token is how every tool and job names a node."""
+        rel = posixpath.relpath(container_path, CONTAINER_TRACKS)
+        parts = rel.split("/")
+        if rel == "." or rel.startswith("..") or len(parts) < 4 or parts[1:3] != ["archive", "nodes"]:
+            raise PathError(f"not inside a node directory: {container_path}")
+        return "/".join(parts[:4])
+
+    @staticmethod
+    def is_node_dir(container_path: str) -> bool:
+        """True for exactly `/work/tracks/<track>/archive/nodes/<dir>`."""
+        try:
+            return container_path == f"{CONTAINER_TRACKS}/{ContainerManager.node_of(container_path)}"
+        except PathError:
+            return False
+
+    @staticmethod
+    def workspace_of(node: str) -> str:
+        return f"{CONTAINER_TRACKS}/{node}/workspace"
+
+    @staticmethod
+    def job_label(node: str) -> str:
+        """`<track>/archive/nodes/<dir>` -> `<track>/<dir>`, the label jobs carry (DataLayout.job_label)."""
+        parts = node.split("/")
+        return f"{parts[0]}/{parts[-1]}"
+
+    def node_token(self, node_dir: str | os.PathLike) -> str:
+        """Host node directory -> its node token; PathError unless it is `<tracks_root>/<track>/archive/nodes/<dir>`."""
+        c = self.to_container(node_dir)
+        if not self.is_node_dir(c):
+            raise PathError(f"not a node directory under {self.tracks_root}: {node_dir}")
+        return self.node_of(c)
+
+    # ---- lifecycle ----
+
+    def ensure_running(self) -> None:
+        """Create/start the container; idempotent. Recreated if the tracks mount moved or it predates the two-container split
+        (the old container also published the GUI/Jupyter ports, which now belong to the learner container)."""
+        with self._lock:
+            self.tracks_root.mkdir(parents=True, exist_ok=True)
+            root = str(self.tracks_root.resolve())
+            info = self._inspect()
+            if info is not None and (self._label(info, TRACKS_LABEL) != root or self._label(info, ROLE_LABEL) != self.ROLE):
+                self.remove()
+                info = None
+            if info is None:
+                # No published ports; the image's desktop still starts, with a random VNC password nobody uses.
+                self._run_new("-e", f"VNC_PW={secrets.token_urlsafe(9)}", "-l", f"{TRACKS_LABEL}={root}", "-v", f"{root}:{CONTAINER_TRACKS}", self.image, "--wait")
+            else:
+                self._start_stopped(info)
+
+    def status(self) -> dict:
+        info = self._inspect()
+        return {
+            "image": self.image,
+            "image_present": self.image_present(),
+            "container": self.name,
+            "running": bool(info and info["State"]["Running"]),
+            "tracks_root": str(self.tracks_root.resolve()),
+        }
 
 
 def default_tracks_root() -> Path:

@@ -9,7 +9,8 @@ from pydantic import BaseModel
 from app.jobs.deps import get_running_manager
 from app.jobs.manager import JobManager
 from app.jobs.store import Job, JobHandle
-from domains.rfic.container import ContainerError, ContainerManager, default_tracks_root
+from domains.rfic.container import ContainerManager, default_tracks_root
+from domains.rfic.learner import LearnerContainer, learner_for
 from domains.rfic.tools_mcp.tools import TOOL_ERRORS, RficTools
 
 DOCKERFILE = Path(__file__).resolve().parent / "docker" / "Dockerfile"
@@ -37,24 +38,38 @@ def get_containers(request: Request) -> ContainerManager:
     return containers_for(request.app)
 
 
+def get_learner() -> LearnerContainer:
+    return learner_for(default_tracks_root())
+
+
 Containers = Annotated[ContainerManager, Depends(get_containers)]
+Learner = Annotated[LearnerContainer, Depends(get_learner)]
 Jobs = Annotated[JobManager, Depends(get_running_manager)]
 
 
+class LearnerStatus(BaseModel):
+    container: str
+    running: bool
+    node: str | None  # token of the node whose workspace/ is mounted (and nothing else)
+    gui_port: int
+    jupyter_port: int
+
+
 class ContainerStatus(BaseModel):
+    """The Builder/checker container (mounts all of data/tracks) and the learner container (one node's workspace/)."""
+
     image: str
     image_present: bool
     container: str
     running: bool
     tracks_root: str
-    gui_port: int
-    jupyter_port: int
+    learner: LearnerStatus
 
 
 class GuiRequest(BaseModel):
     tool: Literal["xschem", "klayout", "qucs-s", "desktop"] = "xschem"
     node: str | None = None
-    file: str | None = None  # path relative to the node directory (when `node` is set) or nodes root
+    file: str | None = None  # path in the node's workspace/ (relative to the node directory, e.g. workspace/amp.sch); needs `node`
     pdk: str | None = None
     open_browser: bool = True
 
@@ -83,35 +98,41 @@ def _guard(fn):
         raise HTTPException(400, str(e)) from None
 
 
+def _status(c: ContainerManager, learner: LearnerContainer) -> dict:
+    return {**c.status(), "learner": learner.status()}
+
+
 @router.get("/container", response_model=ContainerStatus, operation_id="getRficContainer")
-def container_status(c: Containers) -> dict:
-    return _guard(c.status)
+def container_status(c: Containers, learner: Learner) -> dict:
+    return _guard(lambda: _status(c, learner))
 
 
 @router.post("/container/start", response_model=ContainerStatus, operation_id="startRficContainer")
-def container_start(c: Containers) -> dict:
+def container_start(c: Containers, learner: Learner) -> dict:
+    """Start the Builder/checker container; the learner container starts when a learner tool needs it (it needs a node)."""
     _guard(c.ensure_running)
-    return c.status()
+    return _status(c, learner)
 
 
 @router.post("/container/stop", response_model=ContainerStatus, operation_id="stopRficContainer")
-def container_stop(c: Containers) -> dict:
+def container_stop(c: Containers, learner: Learner) -> dict:
     _guard(c.stop)
-    return c.status()
+    _guard(learner.stop)
+    return _status(c, learner)
 
 
 @router.post("/gui", response_model=UrlResponse, operation_id="launchRficGui")
-def launch_gui(body: GuiRequest, c: Containers) -> UrlResponse:
-    """Start a GUI tool on the container's VNC display and open noVNC in the system browser."""
+def launch_gui(body: GuiRequest, learner: Learner) -> UrlResponse:
+    """Start a GUI tool on the learner container's VNC display (it mounts only `node`'s workspace/) and open noVNC in the system browser."""
     node = node_token(body.node)
-    file = f"{node}/{body.file}" if node and body.file else body.file
-    url = _guard(lambda: c.launch_gui(body.tool, node=node, file=file, pdk=body.pdk, open_browser=body.open_browser))
+    url = _guard(lambda: learner.launch_gui(body.tool, node=node, file=body.file, pdk=body.pdk, open_browser=body.open_browser))
     return UrlResponse(url=url)
 
 
 @router.post("/jupyter", response_model=UrlResponse, operation_id="launchRficJupyter")
-def launch_jupyter(body: JupyterRequest, c: Containers) -> UrlResponse:
-    return UrlResponse(url=_guard(lambda: c.launch_jupyter(node_token(body.node) or '', open_browser=body.open_browser)))
+def launch_jupyter(body: JupyterRequest, learner: Learner) -> UrlResponse:
+    """JupyterLab in the learner container, rooted at `node`'s workspace/ (the only directory it can see)."""
+    return UrlResponse(url=_guard(lambda: learner.launch_jupyter(node_token(body.node) or "", open_browser=body.open_browser)))
 
 
 def start_image_build(containers: ContainerManager, jobs: JobManager) -> Job:
@@ -129,7 +150,8 @@ def build_image(c: Containers, jobs: Jobs) -> Job:
 
 @router.post("/run", response_model=Job, operation_id="runRficSim")
 def run_sim(body: RunRequest, c: Containers, jobs: Jobs) -> Job:
-    """Run a sim as a job (streams to /api/jobs/stream). Path rules as for the MCP tools, pinned to `node`."""
+    """Builder/dev tool (the UI does not call it): run a sim as a job in the Builder container, which also sees `_hidden/`.
+    Path rules as for the MCP tools, pinned to `node`. The learner's Run simulation is the lifecycle `run_commands`, in the learner container."""
     node = node_token(body.node)
     tools = RficTools(c, node=node)
     method, kwargs = {

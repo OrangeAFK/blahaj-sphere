@@ -1,6 +1,6 @@
 """M5 acceptance (manual, LIVE: real Planner + Builder calls on the subscription, real container). Not run by pytest.
 
-    uv run python -m scripts.m5_acceptance [--rounds 3]     # resumes: appends to an existing m5_acceptance.json
+    uv run python -m scripts.legacy.m5_acceptance [--rounds 3]     # resumes: appends to an existing m5_acceptance.json
 
 Each round: Planner options from the real data/ (goals.md, frozen framework, diagnostic tiers) -> pick the first
 option whose domain+subskills no earlier round built -> BuildService as a background job on an in-process JobManager

@@ -1,6 +1,6 @@
 """M2.5 Builder spike (manual, LIVE: calls `claude -p` with the rfic MCP server). Not run by pytest.
 
-    uv run python -m scripts.m25_builder_spike [--only a,b,c] [--model claude-sonnet-5-5] [--no-fallback]
+    uv run python -m scripts.legacy.m25_builder_spike [--only a,b,c] [--model claude-sonnet-5-5] [--no-fallback]
 
 Builds three nodes with domains/rfic/prompts/builder.md, gates each (app/builder/gate.py), retries up
 to 2x with the gate errors. A node still failing on the primary model is moved to data/spike/failed/
@@ -26,7 +26,7 @@ from domains.rfic.container import default_tracks_root
 from domains.rfic.domain import run_checker
 from domains.rfic.tools_mcp.config import tool_names, write_mcp_config
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 BUILDER_MD = REPO / "domains" / "rfic" / "prompts" / "builder.md"
 PRIMARY, FALLBACK = "claude-sonnet-5-5", "claude-opus-5-5"
 MAX_RETRIES = 2
