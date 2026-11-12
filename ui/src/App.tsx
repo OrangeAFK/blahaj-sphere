@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type TracksView } from './api/client'
+import { Graph } from './Graph'
 import { Home } from './Home'
 import { JobsTray } from './JobsTray'
 import { NodePage } from './NodePage'
@@ -9,7 +10,7 @@ import { SettingsPage } from './SettingsPage'
 import { Tracks } from './Tracks'
 import { Fin } from './ui'
 
-type Route = { page: 'home' | 'setup' | 'settings' | 'tracks' } | { page: 'node'; id: number }
+type Route = { page: 'home' | 'setup' | 'settings' | 'tracks' | 'graph' } | { page: 'node'; id: number }
 
 const parse = (h: string): Route => {
   const m = /^#\/node\/(\d+)$/.exec(h)
@@ -17,6 +18,7 @@ const parse = (h: string): Route => {
   if (h === '#/setup') return { page: 'setup' }
   if (h === '#/settings') return { page: 'settings' }
   if (h === '#/tracks') return { page: 'tracks' }
+  if (h === '#/graph') return { page: 'graph' }
   return { page: 'home' }
 }
 
@@ -60,6 +62,7 @@ export default function App() {
           <span className="text-lg font-bold text-sky-900">BlahajSphere</span>
           <nav className="ml-4 flex gap-1" aria-label="Main">
             {tab('home', '#/', 'Home')}
+            {tab('graph', '#/graph', 'Graph')}
             {tab('setup', '#/setup', 'Setup')}
             {tab('tracks', '#/tracks', 'Tracks')}
             {tab('settings', '#/settings', 'Settings')}
@@ -87,6 +90,7 @@ export default function App() {
       <main key={active?.id ?? 'none'} className="mx-auto max-w-6xl p-4 pb-48">
         {route.page === 'home' && <Home open={(id) => go(`#/node/${id}`)} />}
         {route.page === 'node' && <NodePage key={route.id} id={route.id} home={() => go('#/')} />}
+        {route.page === 'graph' && <Graph track={active?.id ?? ''} />}
         {route.page === 'setup' && <><Onboarding track={active?.name} /><Preflight /></>}
         {route.page === 'tracks' && <Tracks onChange={onTracks} go={go} />}
         {route.page === 'settings' && <SettingsPage />}

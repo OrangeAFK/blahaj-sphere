@@ -15,6 +15,10 @@ export type TracksView = components['schemas']['TracksView']
 export type TrackView = components['schemas']['TrackView']
 export type TrashView = components['schemas']['TrashView']
 
+export type GraphView = components['schemas']['GraphView']
+export type GraphNode = components['schemas']['GraphNode']
+export type GraphEdge = components['schemas']['GraphEdge']
+
 export type NodeSummary = components['schemas']['NodeSummary']
 export type NodeView = components['schemas']['NodeView']
 export type CheckerView = components['schemas']['CheckerView']
@@ -132,6 +136,7 @@ export const api = {
   getDiagnostic: () => req<DiagnosticView>('/onboarding/diagnostic'),
   diagnosticNext: () => post<DiagnosticView>('/onboarding/diagnostic/next'),
   diagnosticAnswer: (answer: string) => post<AnswerResult>('/onboarding/diagnostic/answer', { answer }),
+  graph: () => req<GraphView>('/graph'),
   nodes: () => req<NodeSummary[]>('/nodes'),
   node: (id: number) => req<NodeView>(`/nodes/${id}`),
   submitPrelab: (id: number, answers: Record<string, string | number>) => post<NodeView>(`/nodes/${id}/prelab/submit`, { answers }),

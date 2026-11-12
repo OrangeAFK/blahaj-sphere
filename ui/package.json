@@ -12,6 +12,7 @@
     "gen:client": "openapi-typescript openapi.json -o src/api/schema.d.ts"
   },
   "dependencies": {
+    "@xyflow/react": "^12.12.1",
     "katex": "^0.16.47",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
