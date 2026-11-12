@@ -14,6 +14,7 @@ class Speaker:
         self.model_path = model_path
         self._voice = None
         self._lock = threading.Lock()
+        self._synth = threading.Lock()  # one synthesis at a time: a pre-generated clip and a live probe may overlap
 
     def load(self):
         with self._lock:
@@ -29,8 +30,9 @@ class Speaker:
     def synthesize(self, text: str) -> tuple[bytes, float]:
         """-> (WAV bytes, synthesis seconds). Model load excluded from the time."""
         voice = self.load()
-        t0 = time.perf_counter()
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:
-            voice.synthesize_wav(text, w)
-        return buf.getvalue(), time.perf_counter() - t0
+        with self._synth:
+            t0 = time.perf_counter()
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                voice.synthesize_wav(text, w)
+            return buf.getvalue(), time.perf_counter() - t0

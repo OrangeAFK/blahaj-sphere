@@ -12,7 +12,7 @@ from app.datastore.cache import DataStore, rebuild_db
 from app.datastore.layout import DataLayout
 from app.datastore.misconceptions import fold, read_records
 from app.lifecycle.nodes import LifecycleError
-from app.lifecycle.oral import CLOSING, oral_verdict
+from app.lifecycle.oral import CLOSING, oral_verdict, wants_probe
 from app.llm.types import LLMError
 from app.onboarding.framework import Framework, FrameworkStore
 from app.voice.service import Voice
@@ -34,6 +34,10 @@ KEY = [_item(1, "matching.l_network"), _item(2, "noise.figure_cascade"), _item(3
        _item(5, "noise.sources"), _item(6, "matching.l_network"), _item(8, "filters.rc_corner"), _item(7, "devices.biasing", True)]  # fmt: skip
 CLEAN = {"p1": 150000, "p2": 1002, "p3": "S11 is the reflection coefficient"}  # both numeric items within tolerance
 NODE = "0901-rc-lowpass"
+# >= 25 words and no hedge: the exam moves straight on to the next key question (a thin or hedged answer gets a live probe, DECISIONS M8)
+FULL = ("I would use the quality factor and the reflection coefficient here because the loaded Q sets the bandwidth, the match transforms the load "
+        "resistance down to the source, and the reactive parts cancel at the design frequency")
+THIN = "the quality factor sets it"
 
 
 def prepare_oral(env, track=T):
@@ -69,7 +73,7 @@ def run_exam(lc, ref, n=None, answers=None):
         v = lc.oral.view(ref)
         if v["status"] == "complete":
             break
-        text = (answers or ["I would use the quality factor and the reflection coefficient"])[min(i, len(answers or [1]) - 1)]
+        text = (answers or [FULL])[min(i, len(answers or [1]) - 1)]
         lc.oral.answer(ref, text)
     return lc.oral.view(ref)["turns"]
 
@@ -105,60 +109,108 @@ def test_no_interleaved_item_in_the_key_means_core_only(oral_env, tmp_path):
     assert lc.oral.start(ref, "text", False)["plan"] == {"n_core": 2, "n_interleaved": 0, "reason": "all numeric prelab answers were within tolerance"}
 
 
-# ---- examiner: no anchors, flow owned by code ---------------------------------------------------------------------------------------
+# ---- core questions come from the key; the examiner only probes (M8) ---------------------------------------------------------------
 
 
-def test_examiner_receives_questions_and_probes_but_never_anchors(oral_env, tmp_path):
-    lc, ad, _ = make(oral_env, tmp_path, {"oral_dialogue": [{"say": "Question 1?", "item_id": "o1", "kind": "question"},
-                                                            {"say": "Why?", "item_id": "o1", "kind": "probe"}]})
+def examiner_calls(ad):
+    return [r for r in ad.requests if r.task_type == "oral_dialogue"]
+
+
+@pytest.mark.parametrize("answer, probe", [
+    ("", True), (THIN, True), ("two words", True),  # thin: fewer than 25 words
+    (FULL, False), (FULL + " but I am not sure about the last part", True), (FULL + ", I don't know why though", True), ("maybe " + FULL, True),
+    (FULL.replace("quality factor", "Q"), False),
+])  # fmt: skip
+def test_wants_probe(answer, probe):
+    assert wants_probe(answer) is probe
+
+
+def test_core_questions_are_spoken_from_the_key_with_no_model_call(oral_env, tmp_path):
+    lc, ad, _ = make(oral_env, tmp_path)  # no oral_dialogue script at all: a call would be an LLMError
     ref = to_oral(lc, CLEAN)
     lc.oral.start(ref, "text", False)
-    lc.oral.answer(ref, "because of the reflection coefficient")
-    reqs = [r for r in ad.requests if r.task_type == "oral_dialogue"]
-    assert len(reqs) == 2 and all(r.light for r in reqs)
-    blob = json.dumps([r.messages for r in reqs])
+    turns = run_exam(lc, ref)
+    ex = [t for t in turns if t["role"] == "examiner"]
+    assert [(t["kind"], t["source"], t["text"]) for t in ex] == [("question", "key", "Question 1?"), ("question", "key", "Question 2?"),
+                                                                 ("question", "key", "Question 7?"), ("done", "key", CLOSING)]  # fmt: skip
+    assert examiner_calls(ad) == []
+    assert all(t["latency"]["llm_s"] == 0 for t in lc.oral._state(ref)["turns"] if t["role"] == "examiner")
+
+
+def test_thin_answer_gets_a_live_probe_the_examiner_may_also_decline(oral_env, tmp_path):
+    script = [{"say": "Why does that hold?", "item_id": "o1", "kind": "probe"}, {"say": "", "item_id": "o1", "kind": "none"}]
+    lc, ad, _ = make(oral_env, tmp_path, {"oral_dialogue": script})
+    ref = to_oral(lc, CLEAN)
+    lc.oral.start(ref, "text", False)
+    r1 = lc.oral.answer(ref, THIN)  # thin -> examiner -> probe
+    assert (r1["examiner"]["kind"], r1["examiner"]["source"], r1["examiner"]["text"]) == ("probe", "llm", "Why does that hold?")
+    r2 = lc.oral.answer(ref, THIN)  # still thin -> examiner says the answer is enough -> next key question
+    assert (r2["examiner"]["kind"], r2["examiner"]["source"], r2["examiner"]["text"]) == ("question", "key", "Question 2?")
+    assert len(examiner_calls(ad)) == 2
+    lat = lc.oral._state(ref)["turns"][-1]["latency"]
+    assert lat["llm_s"] >= 0 and lc.oral._state(ref)["cursor"] == {"i": 1, "probes": 0}
+
+
+def test_at_most_two_probes_per_item_then_the_key_question(oral_env, tmp_path):
+    lc, ad, _ = make(oral_env, tmp_path, {"oral_dialogue": [{"say": f"Probe {i}", "item_id": "o1", "kind": "probe"} for i in range(5)]})
+    ref = to_oral(lc, CLEAN)
+    lc.oral.start(ref, "text", False)
+    kinds = [lc.oral.answer(ref, THIN)["examiner"]["kind"] for _ in range(3)]
+    assert kinds == ["probe", "probe", "question"] and len(examiner_calls(ad)) == 2  # the third thin answer never reaches the examiner
+    assert lc.oral._state(ref)["cursor"]["i"] == 1
+
+
+def test_long_confident_answers_skip_the_examiner_even_when_it_is_available(oral_env, tmp_path):
+    lc, ad, _ = make(oral_env, tmp_path, {"oral_dialogue": [{"say": "Probe", "item_id": "o1", "kind": "probe"}] * 9})
+    ref = to_oral(lc, CLEAN)
+    lc.oral.start(ref, "text", False)
+    run_exam(lc, ref)
+    assert examiner_calls(ad) == []
+
+
+@pytest.mark.parametrize("script", [{}, {"oral_dialogue": [{"say": "x", "item_id": "o1", "kind": "question"}] * 4}], ids=["outage", "not-a-probe"])
+def test_examiner_outage_or_nonsense_falls_back_to_the_keys_own_probes(oral_env, tmp_path, script):
+    lc, _, _ = make(oral_env, tmp_path, script)
+    ref = to_oral(lc, CLEAN)
+    lc.oral.start(ref, "text", False)
+    out = [lc.oral.answer(ref, THIN)["examiner"] for _ in range(3)]
+    assert [(t["kind"], t["source"], t["text"]) for t in out] == [("probe", "fallback", "Probe 1a?"), ("probe", "fallback", "Probe 1b?"),
+                                                                   ("question", "key", "Question 2?")]  # fmt: skip
+
+
+def test_an_item_without_probes_just_moves_on_when_the_examiner_is_down(oral_env, tmp_path):
+    key = [{**it, "probes": []} for it in KEY]
+    (DataLayout(oral_env, T).nodes_dir / NODE / "_hidden" / "oral_key.yaml").write_text(yaml.safe_dump({"items": key}, sort_keys=False))
+    lc, _, _ = make(oral_env, tmp_path)
+    ref = to_oral(lc, CLEAN)
+    lc.oral.start(ref, "text", False)
+    assert lc.oral.answer(ref, THIN)["examiner"]["text"] == "Question 2?"
+
+
+def test_examiner_receives_the_item_and_transcript_but_never_anchors(oral_env, tmp_path):
+    lc, ad, _ = make(oral_env, tmp_path, {"oral_dialogue": [{"say": "Why?", "item_id": "o1", "kind": "probe"}]})
+    ref = to_oral(lc, CLEAN)
+    lc.oral.start(ref, "text", False)
+    lc.oral.answer(ref, THIN)
+    reqs = examiner_calls(ad)
+    assert len(reqs) == 1 and reqs[0].light
+    blob = json.dumps(reqs[0].messages)
     assert "ANCHOR-SECRET" not in blob and "anchors" not in blob and "matching.l_network" not in blob  # nor subskills/tiers
-    sent = json.loads(reqs[1].messages[1]["content"])
-    assert sent["items"][0] == {"id": "o1", "question": "Question 1?", "probes": ["Probe 1a?", "Probe 1b?"], "interleaved": False}
-    assert [i["interleaved"] for i in sent["items"]] == [False, False, True]
+    sent = json.loads(reqs[0].messages[1]["content"])
+    assert sent["item"] == {"id": "o1", "question": "Question 1?", "probes": ["Probe 1a?", "Probe 1b?"], "interleaved": False} and sent["probes_used"] == 0
     assert [t["role"] for t in sent["transcript"]] == ["examiner", "learner"] and sent["transcript"][0]["item_id"] == "o1"
 
 
-def test_flow_is_enforced_whatever_the_examiner_says(oral_env, tmp_path):
-    script = [
-        {"say": "Why do we need that? Question 1?", "item_id": "o1", "kind": "question"},  # opening, fine
-        {"say": "Probe one", "item_id": "o1", "kind": "probe"},
-        {"say": "Probe two", "item_id": "o1", "kind": "probe"},
-        {"say": "Probe three", "item_id": "o1", "kind": "probe"},  # a 3rd follow-up is refused -> o2's key question
-        {"say": "all done", "item_id": "o2", "kind": "done"},  # done while o7 is still open -> o7's key question
-        {"say": "wrong item", "item_id": "o2", "kind": "question"},  # o7 is the last item: only "done" is acceptable -> closing line
-    ]
-    lc, _, _ = make(oral_env, tmp_path, {"oral_dialogue": script})
+def test_exam_ends_when_the_last_item_is_done_and_refuses_more_answers(oral_env, tmp_path):
+    lc, _, _ = make(oral_env, tmp_path)
     ref = to_oral(lc, CLEAN)
     lc.oral.start(ref, "text", False)
-    turns = run_exam(lc, ref)
-    ex = [t for t in turns if t["role"] == "examiner"]
-    assert [(t["kind"], t["source"]) for t in ex] == [("question", "llm"), ("probe", "llm"), ("probe", "llm"), ("question", "coerced"),
-                                                      ("question", "coerced"), ("done", "coerced")]  # fmt: skip
-    kinds = [t["kind"] for t in ex]
-    assert kinds.count("probe") == 2 and kinds[-1] == "done" and kinds.count("question") == 3  # o1, o2, o7 each asked exactly once
-    assert ex[0]["text"] == "Why do we need that? Question 1?"  # the examiner's wording is used when it follows the flow
-    questions = [t["text"] for t in ex if t["kind"] == "question"]
-    assert questions[1:] == ["Question 2?", "Question 7?"]  # coerced ones use the key wording
-    assert lc.oral.view(ref)["status"] == "complete" and lc.oral.view(ref)["can_finish"]
+    run_exam(lc, ref)
+    v = lc.oral.view(ref)
+    assert v["status"] == "complete" and v["can_finish"]
     with pytest.raises(LifecycleError) as e:
         lc.oral.answer(ref, "one more")
     assert e.value.status == 409
-
-
-def test_examiner_outage_falls_back_to_the_key_wording(oral_env, tmp_path):
-    lc, _, _ = make(oral_env, tmp_path)  # no oral_dialogue script: every call fails
-    ref = to_oral(lc, CLEAN)
-    lc.oral.start(ref, "text", False)
-    turns = run_exam(lc, ref)
-    ex = [t for t in turns if t["role"] == "examiner"]
-    assert [t["text"] for t in ex] == ["Question 1?", "Question 2?", "Question 7?", CLOSING]
-    assert {t["source"] for t in ex} == {"fallback"} and ex[-1]["kind"] == "done"
 
 
 def test_start_resumes_and_blocks_other_stages(oral_env, tmp_path):
@@ -193,7 +245,7 @@ def test_pass_writes_oral_items_misconceptions_and_files(oral_env, tmp_path):
     lc, ad, _ = make(oral_env, tmp_path, {"grade_prelab_explain": [GRADES], "grade_oral": [g]})
     ref = to_oral(lc, CLEAN)
     lc.oral.start(ref, "text", False)
-    run_exam(lc, ref, answers=["the quality factor sets it", "the quality factor again", "quality factor"])
+    run_exam(lc, ref, answers=[FULL, FULL + " again", FULL])
     d = lc.oral_finish(901)
     assert d["status"] == "debrief" and not d["provisional"]
     o = d["oral"]
@@ -231,12 +283,12 @@ def test_failed_oral_logs_misconceptions_and_spawns_a_remediation_child(oral_env
             fake.update(option=option, release=lambda: on_success({"node_dir": d.name}))
             return SimpleNamespace(id="job-r"), SimpleNamespace(name=d.name, node_id=902)
 
-    monkeypatch.setattr("app.lifecycle.oral.BuildService", FakeBuild)
+    monkeypatch.setattr("app.lifecycle.remediation.BuildService", FakeBuild)
     rem_opt = {"title": "Probe the L-match Q", "why_now": "the oral showed a gap", "kind": "remediation", "domain": "matching",
                "subskills": ["matching.l_network"], "tier": 1, "size_est_min": 30}  # fmt: skip
     g = grades({"o1": 0, "o2": 3, "o7": 3}, mis=[{"text": "L-match always raises Q", "subskill": "matching.l_network"}])
     lc, ad, _ = make(oral_env, tmp_path, {"grade_prelab_explain": [GRADES], "grade_oral": [g], "plan_branches": [{"options": [rem_opt]}]})
-    lc.oral.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: SimpleNamespace(status="running", error=None)))
+    lc.oral.remediator.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: SimpleNamespace(status="running", error=None)))
     ref = to_oral(lc, CLEAN)
     lc.oral.start(ref, "text", False)
     run_exam(lc, ref)
@@ -282,11 +334,11 @@ def test_remediation_failure_is_reported_then_retried(oral_env, tmp_path, monkey
         def start(self, jobs, option, on_success=None):
             return SimpleNamespace(id="job-r"), SimpleNamespace(name="0902-r", node_id=902)
 
-    monkeypatch.setattr("app.lifecycle.oral.BuildService", FakeBuild)
+    monkeypatch.setattr("app.lifecycle.remediation.BuildService", FakeBuild)
     opt = {"title": "t", "why_now": "w", "kind": "remediation", "domain": "matching", "subskills": ["matching.l_network"], "tier": 1, "size_est_min": 30}
     lc, _, _ = make(oral_env, tmp_path, {"grade_prelab_explain": [GRADES], "grade_oral": [grades({"o1": 0, "o2": 3, "o7": 3})],
                                          "plan_branches": [LLMError("down"), {"options": [opt]}]})  # fmt: skip
-    lc.oral.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: SimpleNamespace(status="running", error=None)))
+    lc.oral.remediator.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: SimpleNamespace(status="running", error=None)))
     ref = to_oral(lc, CLEAN)
     lc.oral.start(ref, "text", False)
     run_exam(lc, ref)
@@ -300,7 +352,7 @@ def test_remediation_with_an_invalid_option_is_a_reported_failure(oral_env, tmp_
     bad = {"title": "t", "why_now": "w", "kind": "challenge", "domain": "matching", "subskills": ["matching.l_network"], "tier": 1, "size_est_min": 30}
     lc, _, _ = make(oral_env, tmp_path, {"grade_prelab_explain": [GRADES], "grade_oral": [grades({"o1": 0, "o2": 3, "o7": 3})],
                                          "plan_branches": [{"options": [bad]}, {"options": [bad]}]})  # fmt: skip
-    lc.oral.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: None))
+    lc.oral.remediator.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: None))
     ref = to_oral(lc, CLEAN)
     lc.oral.start(ref, "text", False)
     run_exam(lc, ref)

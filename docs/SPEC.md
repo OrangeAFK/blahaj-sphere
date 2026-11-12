@@ -300,7 +300,7 @@ Submit → copy `proof_artifacts` to `proof/` → checker job → pass/fail. **N
 ### 7.6 Oral (push-to-talk voice, text fallback)
 - Hold Space or on-screen button; UI sends start/stop; backend records via `sounddevice`, transcribes with faster-whisper using `initial_prompt` = node `vocab` + domain `vocab.txt`. Piper reads questions (toggle).
 - Length: all numeric prelab items within tolerance → **2 core questions**; else **5**. Plus **1 interleaved** question when one exists in the key.
-- Examiner (light) asks key questions + live probes; it receives `oral_key` questions and probes but **not anchors**.
+- Core and interleaved questions are spoken **straight from `oral_key.yaml`** (no model call); the next question's Piper audio is pre-generated while the learner answers. The live examiner (light) is called only for **probes** (after a thin or hedged answer, max 2 per item) and receives the item's question and probes but **not anchors**.
 - Grading (heavy, pinned) over full transcript → §5.7. **Pass** = mean ≥ 2.0 over non-interleaved items and no non-interleaved item scored 0. Interleaved items count toward scores but never fail the node; a 0 logs a misconception.
 - Fail → remediation child node (Planner, kind=remediation) + misconceptions logged; parent marked done-with-remediation.
 

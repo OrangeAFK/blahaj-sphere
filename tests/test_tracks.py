@@ -392,11 +392,11 @@ def test_the_oral_flow_on_one_track_leaves_the_other_byte_identical(two, tmp_pat
             on_success({"node_dir": d.name})
             return SimpleNamespace(id="job-r"), SimpleNamespace(name=d.name, node_id=902)
 
-    monkeypatch.setattr("app.lifecycle.oral.BuildService", FakeBuild)
+    monkeypatch.setattr("app.lifecycle.remediation.BuildService", FakeBuild)
     rem = {"title": "Probe the L-match Q", "why_now": "gap", "kind": "remediation", "domain": "matching", "subskills": ["matching.l_network"], "tier": 1, "size_est_min": 30}
     g = grades({"o1": 0, "o2": 3, "o7": 3}, mis=[{"text": "L-match always raises Q", "subskill": "matching.l_network"}])
     lc, ad, _ = make(root, tmp_path, {"grade_prelab_explain": [GRADES], "grade_oral": [g], "plan_branches": [{"options": [rem]}]}, track=B)
-    lc.oral.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: SimpleNamespace(status="done", error=None)))
+    lc.oral.remediator.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: SimpleNamespace(status="done", error=None)))
     ref = to_oral(lc, CLEAN)
     lc.oral.start(ref, "text", False)
     run_exam(lc, ref)

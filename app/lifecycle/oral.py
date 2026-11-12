@@ -1,9 +1,11 @@
-"""Oral exam (SPEC §7.6): adaptive length, a light examiner, a pinned heavy grader, the pass rule and the remediation child.
+"""Oral exam (SPEC §7.6): adaptive length, a light examiner for probes, a pinned heavy grader, the pass rule and the remediation child.
 
-Flow code (not the examiner model) owns the exam: which items are asked, in which order, at most 2 probes per item, and when it is
-done. The examiner only supplies the wording of the next utterance; anything that breaks the flow is replaced by the key's own
-question text (`source: "coerced"`), and a failed examiner call falls back the same way (`source: "fallback"`), so a model outage
-never strands the learner. The examiner gets questions and probes but never anchors; anchors go only to the grader.
+Flow code owns the exam: which items are asked, in which order, at most 2 probes per item, and when it is done. Core questions are
+spoken straight from oral_key.yaml (`source: "key"`, no model call), and while the learner answers, the audio of the NEXT question is
+already being synthesized (Voice.pregenerate), so the turn after an answer costs no LLM or TTS time. The live examiner (light) is called
+only when the answer looks thin or hedged (`wants_probe`) and a probe is still allowed; if it fails or returns nothing usable, the key's own
+probe for that item is used (`source: "fallback"`) or the exam simply moves on, so a model outage never strands the learner. The examiner
+gets the question, its probes and the transcript but never anchors; anchors go only to the grader.
 
 Exam state lives in data/sessions/<node dir>/oral.json; the transcript is also written to the node's oral.md at the end (§4.1).
 """
@@ -15,14 +17,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from app.builder.service import BuildError, BuildService
-from app.datastore.cache import rebuild_db
 from app.datastore.misconceptions import add_misconception, fold, read_records
 from app.lifecycle.debrief import GRADE_SCHEMA, refresh_provisional, tolerance_abs
-from app.lifecycle.nodes import LifecycleError, NodeRef, NodeStore, append_jsonl, autocommit, node_lock
+from app.lifecycle.nodes import LifecycleError, NodeRef, NodeStore, autocommit, node_lock
+from app.lifecycle.remediation import Remediator
 from app.lifecycle.tutor import public_checker
 from app.llm.types import LLMError, Request
-from app.planner.service import Planner, PlannerError
 from app.voice.stt import SAMPLE_RATE, VoiceUnavailable, build_prompt
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
@@ -30,10 +30,12 @@ GRADE_TASK = "grade_oral"
 EXAMINER_TASK = "oral_dialogue"
 EXAMINER_SCHEMA = {
     "type": "object",
-    "properties": {"say": {"type": "string"}, "item_id": {"type": "string"}, "kind": {"type": "string", "enum": ["question", "probe", "done"]}},
+    "properties": {"say": {"type": "string"}, "item_id": {"type": "string"}, "kind": {"type": "string", "enum": ["probe", "none"]}},
     "required": ["say", "item_id", "kind"],
 }
 MAX_PROBES = 2  # §7.6 examiner prompt: at most 2 follow-ups per item
+PROBE_BELOW_WORDS = 25  # an answer shorter than this is "thin" and may get a probe (~10 s of speech); longer ones go straight on (DECISIONS M8)
+HEDGES = re.compile(r"\b(don'?t know|do not know|not sure|no idea|i guess|guessing|maybe|probably|i forget|can'?t remember)\b", re.I)
 N_CORE_CLEAN, N_CORE_MISSED = 2, 5  # §7.6: all numeric prelab items within tolerance -> 2 core questions, else 5
 PASS_MEAN = 2.0  # §7.6: mean >= 2.0 over non-interleaved items and none scored 0
 MAX_ANSWER_CHARS = 4_000
@@ -50,6 +52,11 @@ def _qnorm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
+def wants_probe(answer: str) -> bool:
+    """Cheap, model-free test for "this answer deserves a live probe": thin (fewer than PROBE_BELOW_WORDS words) or hedged."""
+    return len(answer.split()) < PROBE_BELOW_WORDS or bool(HEDGES.search(answer))
+
+
 def oral_verdict(results: list[dict]) -> dict:
     """§7.6 pass rule over graded items: mean >= 2.0 over the non-interleaved ones and none of them scored 0.
     Interleaved items count toward scores elsewhere but never fail the node."""
@@ -64,6 +71,7 @@ class OralExam:
         self.store, self.router, self.domain, self.debrief = store, router, domain, debrief
         self.voice = voice
         self.jobs = jobs  # job manager: needed to start the remediation build (None -> remediation is recorded as "needed")
+        self.remediator = Remediator(store, router, domain, jobs)
 
     # --- state ------------------------------------------------------------------------------------------------
     def _state(self, ref: NodeRef) -> dict:
@@ -100,9 +108,14 @@ class OralExam:
         core = [it for it in key if not it.get("interleaved")]
         core.sort(key=lambda it: it.get("subskill") not in missed)  # stable: questions on missed prelab subskills first
         picked = core[:n_core]
-        inter = [it for it in key if it.get("interleaved")][:1]  # one interleaved question when the key has one
+        # one interleaved question when the key has one; an item on a subskill with an OPEN misconception goes first, so it is revisited and can
+        # resolve (§7.7). Misconceptions logged by this very node are not revisited by it.
+        open_subs = {m["subskill"] for m in fold(read_records(self.store.layout.misconceptions_path, ref.track)) if not m["resolved"] and m["node_id"] != ref.id}
+        inter = sorted((it for it in key if it.get("interleaved")), key=lambda it: it.get("subskill") not in open_subs)[:1]
         reason = ("all numeric prelab answers were within tolerance" if not missed
                   else f"{len(set(missed))} prelab subskill(s) were outside tolerance: " + ", ".join(sorted(set(missed))))  # fmt: skip
+        if inter and inter[0].get("subskill") in open_subs:
+            reason += f"; the interleaved question revisits the open misconception on {inter[0]['subskill']}"
         return {"n_core": len(picked), "n_interleaved": len(inter), "items": [it["id"] for it in [*picked, *inter]], "reason": reason}
 
     # --- view -----------------------------------------------------------------------------------------------------
@@ -187,39 +200,76 @@ class OralExam:
         return items[i]["id"] if 0 <= i < len(items) else None
 
     def _examiner_turn(self, ref: NodeRef, st: dict, timing: dict) -> dict:
+        """The next utterance: a key question (no model call), a live probe, or the closing line; then its audio."""
         items = self._items(ref, st)
         learner_turns = sum(1 for t in st["turns"] if t["role"] == "learner")
         t_llm = time.perf_counter()
-        raw = None if learner_turns >= MAX_LEARNER_TURNS else self._ask_examiner(ref, st, items)
-        llm_s = time.perf_counter() - t_llm
-        say, item_id, kind, source = self._enforce(st, items, raw, force_done=learner_turns >= MAX_LEARNER_TURNS)
+        say, item_id, kind, source, called = self._next(ref, st, items, force_done=learner_turns >= MAX_LEARNER_TURNS)
+        llm_s = time.perf_counter() - t_llm if called else 0.0
         n = len(st["turns"]) + 1
         turn = {"n": n, "role": "examiner", "text": say, "kind": kind, "item_id": item_id, "source": source, "audio": False}
-        tts_s = 0.0
+        tts_s, pregen = 0.0, False
         if st["tts"] and self.voice is not None:
             try:
-                wav, tts_s = self.voice.speaker.synthesize(say)
+                wav, tts_s, pregen = self.voice.clip(say)
                 self.voice.put_audio(ref.track, ref.id, n, wav)
                 turn["audio"] = True
             except (VoiceUnavailable, OSError, RuntimeError) as e:  # a TTS problem must not stop the exam: the text is shown anyway
                 turn["tts_error"] = str(e)[:200]
         # record -> transcript -> question audio (M7 acceptance): per-stage seconds; total_s runs from the stop-recording request
-        # (t0) to the audio being ready, so it already contains stt_s
+        # (t0) to the audio being ready, so it already contains stt_s. llm_s is 0 and `pregenerated` true on a key question (M8).
         lat = {k: round(timing[k], 3) for k in ("record_s", "stt_s") if k in timing}
-        lat.update(llm_s=round(llm_s, 3), tts_s=round(tts_s, 3), total_s=round(time.perf_counter() - timing["t0"], 3))
+        lat.update(llm_s=round(llm_s, 3), tts_s=round(tts_s, 3), pregenerated=pregen, total_s=round(time.perf_counter() - timing["t0"], 3))
         turn["latency"] = lat
         st["turns"].append(turn)
         if kind == "done":
             st["status"] = "complete"
+        elif st["tts"] and self.voice is not None:
+            self._pregenerate_next(st, items)  # while the learner answers, the next key question is spoken into the cache
         return turn
 
-    def _ask_examiner(self, ref: NodeRef, st: dict, items: list[dict]) -> dict | None:
-        """The examiner's raw JSON, or None when the call failed (the caller then falls back to the key's own wording)."""
+    def _next(self, ref: NodeRef, st: dict, items: list[dict], force_done: bool = False) -> tuple[str, str, str, str, bool]:
+        """Apply the flow rules -> (say, item_id, kind, source, examiner_called). Mutates the cursor."""
+        cur = st["cursor"]
+        i, last = cur["i"], len(items) - 1
+        if force_done:
+            return CLOSING, items[-1]["id"], "done", "coerced", False
+        if i < 0:  # opening: the first key question
+            cur["i"], cur["probes"] = 0, 0
+            return items[0]["question"], items[0]["id"], "question", "key", False
+        called = False
+        if cur["probes"] < MAX_PROBES:
+            answer = next((t["text"] for t in reversed(st["turns"]) if t["role"] == "learner"), "")
+            if wants_probe(answer):
+                called = True
+                probe = self._probe(ref, st, items[i], cur["probes"])
+                if probe is not None:
+                    cur["probes"] += 1
+                    return probe[0], items[i]["id"], "probe", probe[1], True
+        if i >= last:
+            return CLOSING, items[-1]["id"], "done", "key", called
+        cur["i"], cur["probes"] = i + 1, 0
+        return items[i + 1]["question"], items[i + 1]["id"], "question", "key", called
+
+    def _probe(self, ref: NodeRef, st: dict, item: dict, used: int) -> tuple[str, str] | None:
+        """A live probe for `item` -> (text, source) or None (the examiner found the answer sufficient, or there is nothing to ask).
+        Examiner outage or unusable reply -> the key's own probe number `used` (source "fallback"), if the key has one."""
+        raw = self._ask_examiner(ref, st, item, used)
+        if isinstance(raw, dict) and raw.get("kind") == "none":
+            return None
+        if isinstance(raw, dict) and raw.get("kind") == "probe" and isinstance(raw.get("say"), str) and raw["say"].strip():
+            return raw["say"].strip()[:600], "llm"
+        probes = [str(p) for p in item.get("probes") or []]
+        return (probes[used], "fallback") if used < len(probes) else None
+
+    def _ask_examiner(self, ref: NodeRef, st: dict, item: dict, used: int) -> dict | None:
+        """The examiner's raw JSON, or None when the call failed."""
         fm = self.store.frontmatter(ref)
         system = (PROMPTS / "examiner.md").read_text(encoding="utf-8").replace("{domain_pack}", self.domain.name)
         payload = {  # anchors, subskills and tiers are deliberately absent (§7.6)
             "brief": self.store.brief(ref),
-            "items": [{"id": it["id"], "question": it["question"], "probes": list(it.get("probes") or []), "interleaved": bool(it.get("interleaved"))} for it in items],
+            "item": {"id": item["id"], "question": item["question"], "probes": list(item.get("probes") or []), "interleaved": bool(item.get("interleaved"))},
+            "probes_used": used,
             "checker_result": public_checker(self.store.session(ref, "checker", None)),
             "transcript": [{"role": t["role"], "text": t["text"], **({"item_id": t["item_id"], "kind": t["kind"]} if t["role"] == "examiner" else {})} for t in st["turns"]],
             "title": fm.get("title"),
@@ -231,38 +281,10 @@ class OralExam:
             return None
         return res.json if isinstance(res.json, dict) else None
 
-    @staticmethod
-    def _enforce(st: dict, items: list[dict], raw: dict | None, force_done: bool = False) -> tuple[str, str, str, str]:
-        """Apply the flow rules to the examiner's reply -> (say, item_id, kind, source). Mutates the cursor."""
-        cur = st["cursor"]
-        valid = (isinstance(raw, dict) and isinstance(raw.get("say"), str) and raw["say"].strip() != "" and raw.get("kind") in ("question", "probe", "done"))
-        say = raw["say"].strip()[:600] if valid else None
-        kind = raw["kind"] if valid else None
-        item_id = raw.get("item_id") if valid else None
-        i, last = cur["i"], len(items) - 1
-
-        def done(text: str | None, source: str) -> tuple[str, str, str, str]:
-            return text or CLOSING, items[-1]["id"], "done", source
-
-        def advance(text_ok: bool, text: str | None) -> tuple[str, str, str, str]:
-            if i >= last:
-                return done(text if text_ok else None, "llm" if text_ok else ("fallback" if not valid else "coerced"))
-            cur["i"], cur["probes"] = i + 1, 0
-            nxt = items[i + 1]
-            return (text if text_ok else nxt["question"]), nxt["id"], "question", ("llm" if text_ok else ("fallback" if not valid else "coerced"))
-
-        if force_done:
-            return done(None, "coerced")
-        if i < 0:  # opening
-            cur["i"], cur["probes"] = 0, 0
-            ok = valid and kind == "question" and item_id == items[0]["id"]
-            return (say if ok else items[0]["question"]), items[0]["id"], "question", ("llm" if ok else ("fallback" if not valid else "coerced"))
-        if valid and kind == "probe" and cur["probes"] < MAX_PROBES:
-            cur["probes"] += 1
-            return say, items[i]["id"], "probe", "llm"
-        if i >= last:
-            return advance(valid and kind == "done", say)
-        return advance(valid and kind == "question" and item_id == items[i + 1]["id"], say)
+    def _pregenerate_next(self, st: dict, items: list[dict]) -> None:
+        """Start synthesizing the next key question (or the closing line) now: the learner is about to talk for 10-20 s."""
+        i = st["cursor"]["i"]
+        self.voice.pregenerate(items[i + 1]["question"] if i + 1 < len(items) else CLOSING)
 
     # --- voice (push-to-talk) -------------------------------------------------------------------------------------
     def _need_voice(self, ref: NodeRef) -> dict:
@@ -441,7 +463,7 @@ class OralExam:
             self._save(ref, st)
             refresh_provisional(self.store, ref)
 
-    # --- remediation child (§7.6) -------------------------------------------------------------------------------------
+    # --- remediation child (§7.6): app/lifecycle/remediation.py ------------------------------------------------------
     def spawn_remediation(self, ref: NodeRef, st: dict | None = None) -> dict:
         """Planner (kind=remediation) -> a build job for the child node. Idempotent; the result is kept in the oral state."""
         own = st is None
@@ -452,53 +474,22 @@ class OralExam:
                 return rem
             if st["grading"]["status"] != "done" or st["grading"]["passed"]:
                 raise LifecycleError(409, "remediation only follows a failed, graded oral exam")
-            if self.jobs is None:
-                st["remediation"] = {"status": "needed"}
-            else:
-                st["remediation"] = self._start_remediation(ref, st)
+            st["remediation"] = self.remediator.spawn(ref, "oral", self._remediation_ctx(ref, st), self._state, self._save)
             if own:
                 self._save(ref, st)
             return st["remediation"]
 
-    def _start_remediation(self, ref: NodeRef, st: dict) -> dict:
+    def _remediation_ctx(self, ref: NodeRef, st: dict) -> dict:
         fm = self.store.frontmatter(ref)
         mine = [m for m in fold(read_records(self.store.layout.misconceptions_path, ref.track)) if m["node_id"] == ref.id]
-        ctx = {
+        return {
             "parent": {"id": ref.id, "title": fm.get("title"), "domain": fm.get("domain"), "subskills": [str(s) for s in fm.get("subskills") or []], "tier": fm.get("tier")},
             "failed_items": [{"subskill": r["subskill"], "score": r["score"], "why": r["rationale"]} for r in st["grading"]["results"] if not r["interleaved"] and r["score"] < 2],
             "misconceptions": [{"text": m["text"], "subskill": m["subskill"]} for m in mine],
         }  # fmt: skip
-        try:
-            option = Planner(self.store.root, ref.track, self.router, self.domain.name).remediation_option(ctx)
-            builder = BuildService(self.store.root, ref.track, self.router, self.domain)
-            parent_id = ref.id
-
-            def done(rec: dict) -> None:  # the child is released: link it to its parent
-                new_dir = self.store.layout.nodes_dir / rec["node_dir"]
-                self.store.set_scalar(NodeRef(int(rec["node_dir"].split("-", 1)[0]), new_dir, ref.track), "parents", [parent_id])
-                rebuild_db(self.store.root)
-                with node_lock(ref.track, parent_id):
-                    p = self.store.find(parent_id)
-                    s2 = self._state(p)
-                    s2["remediation"] = {**(s2.get("remediation") or {}), "status": "ready"}
-                    self._save(p, s2)
-                autocommit(self.store.root, f"node {parent_id}: remediation child {rec['node_dir']} released")
-
-            job, plan = builder.start(self.jobs, option, on_success=done)
-        except (PlannerError, BuildError, LLMError) as e:
-            return {"status": "failed", "error": str(getattr(e, "message", e))[:300]}
-        append_jsonl(self.store.layout.remediation_path, {"ts": _now(), "node_id": ref.id, "decision": "oral_fail", "child": plan.name})
-        return {"status": "building", "job_id": job.id, "child_id": plan.node_id, "node_dir": plan.name, "title": option["title"], "option": option}
 
     def _refresh_remediation(self, ref: NodeRef, st: dict) -> None:
-        """A build job that died leaves the state at "building": look the job up and surface the failure (the learner can retry)."""
-        rem = st.get("remediation")
-        if not rem or rem.get("status") != "building" or self.jobs is None:
-            return
-        store = getattr(self.jobs, "store", None)
-        job = store.get(rem["job_id"]) if store is not None else None
-        if job is not None and str(getattr(job, "status", "")) == "failed":
-            rem.update(status="failed", error=str(getattr(job, "error", "") or "the build failed")[:300])
+        if self.remediator.refresh(st.get("remediation")):
             self._save(ref, st)
 
     def retry_remediation(self, ref: NodeRef) -> dict:

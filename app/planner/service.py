@@ -1,5 +1,9 @@
-"""Planner, minimal (SPEC §7.7, §5.6): 2-4 next-node options from the learner state. Full difficulty control,
-remediation and misconception resolution are M8; here code validates the options against the frozen framework."""
+"""Planner (SPEC §7.7, §5.6): 2-4 next-node options from the learner state of one track.
+
+Input = goals, SUMMARY.md, scores, open misconceptions, the last 10 nodes with their outcomes, the difficulty-control mode and the
+sizing hints (app/planner/difficulty.py). Code validates every option against the frozen framework, the learner's tiers, and the
+difficulty/sizing rules, with one repair attempt.
+"""
 
 import html
 import json
@@ -9,13 +13,14 @@ from pathlib import Path
 
 from app.builder.context import learner_state, load_framework
 from app.datastore.layout import DataLayout
+from app.lifecycle.outcomes import read_outcomes
+from app.planner.difficulty import FAMILIAR_NODES, FOUNDATIONAL_MAX_MIN, Difficulty, check_options, difficulty_from, unfamiliar_subskills
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 MIN_OPTIONS, MAX_OPTIONS = 2, 4
 SIZE_MIN, SIZE_MAX = 15, 180  # §7.7 sizing: 15-45 min foundational, 1-3 h integrative
 KINDS = ("challenge",)  # tier exams M10; remediation children come from Planner.remediation_option (M7)
 REMEDIATION_KINDS = ("remediation",)
-MIN_CHALLENGES_FOR_RATE = 3  # §7.7: fewer than 3 challenge nodes -> diagnostic tier at default sizes
 
 OPTIONS_SCHEMA = {
     "type": "object",
@@ -71,8 +76,10 @@ def validate_option(o, where: str, framework, scores: dict[str, dict], kinds: tu
     return {k: (html.unescape(o[k]).strip() if isinstance(o[k], str) else o[k]) for k in OPTION_KEYS}, []
 
 
-def validate_options(raw, framework, scores: dict[str, dict]) -> tuple[list[dict], list[str]]:
-    """-> (clean options, errors). Every error is phrased so the model can repair it."""
+def validate_options(raw, framework, scores: dict[str, dict], diff: Difficulty | None = None,
+                     unfamiliar: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], list[str]]:
+    """-> (clean options, errors). Every error is phrased so the model can repair it. With `diff`, the difficulty-control and
+    sizing rules (§7.7) are enforced on top of the schema rules."""
     errors: list[str] = []
     opts = raw.get("options") if isinstance(raw, dict) else None
     if not isinstance(opts, list) or not MIN_OPTIONS <= len(opts) <= MAX_OPTIONS:
@@ -83,6 +90,8 @@ def validate_options(raw, framework, scores: dict[str, dict]) -> tuple[list[dict
         errors += errs
         if c is not None:
             clean.append(c)
+    if diff is not None and not errors:
+        errors += check_options(clean, diff, scores, set(unfamiliar))
     return (clean if not errors else []), errors
 
 
@@ -103,40 +112,48 @@ class Planner:
         return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
 
     def planner_input(self) -> dict:
+        return self._inputs()[0]
+
+    def _inputs(self) -> tuple[dict, Difficulty, set[str]]:
         fw = load_framework(self.root, self.track)
         if fw is None:
             raise PlannerError(409, "approve the competency framework first (onboarding)")
         state = learner_state(self.root, self.track)
         if not state["scores"]:
             raise PlannerError(409, "finish the onboarding diagnostic first (no tiers yet)")
-        n_challenges = sum(1 for n in state["recent_nodes"] if n["kind"] == "challenge")
-        return {
+        outcomes = read_outcomes(self.root, self.track)
+        diff = difficulty_from(outcomes)
+        unfamiliar = unfamiliar_subskills(self.root, self.track)
+        recent = [{**n, "outcome": outcomes[n["id"]].label if n["id"] in outcomes else n["status"]} for n in state["recent_nodes"]]
+        inp = {
             "goals": state["goals"],
             "summary": state["summary"],
             "framework": [{"id": d.id, "name": d.name, "subskills": d.subskills, "tiers": d.tiers} for d in fw.domains],
             "scores": state["scores"],
             "open_misconceptions": state["open_misconceptions"],
-            "recent_nodes": state["recent_nodes"],
-            "difficulty": {
-                "challenge_nodes": n_challenges,
-                "rule": "fewer than 3 challenge nodes: use the learner's current tiers and default sizes"
-                if n_challenges < MIN_CHALLENGES_FOR_RATE else "success-rate control arrives in M8; keep current tiers",
+            "recent_nodes": recent,
+            "difficulty": diff.to_input(challenge_nodes=sum(1 for o in outcomes.values() if o.kind == "challenge")),
+            "sizing": {
+                "rule": f"foundational 15-{FOUNDATIONAL_MAX_MIN} min; integrative 60-180 min, only when none of the option's subskills is unfamiliar",
+                "unfamiliar_subskills": unfamiliar, "familiar_after_nodes": FAMILIAR_NODES,
             },
-        }
+        }  # fmt: skip
+        return inp, diff, set(unfamiliar)
 
     def generate(self) -> dict:
         """Call the Planner, validate, keep one repair attempt; store and return {options, model, ts}."""
         fw = load_framework(self.root, self.track)
-        inp = self.planner_input()
+        inp, diff, unfamiliar = self._inputs()
         system = {"role": "system", "content": (PROMPTS / "planner.md").read_text(encoding="utf-8").replace("{domain_pack}", self.domain_pack)}
         user = {"role": "user", "content": json.dumps(inp, ensure_ascii=False)}
         msgs = [system, user]
         errors: list[str] = []
         for _ in range(2):
-            res = self.router.complete("plan_branches", msgs, schema=OPTIONS_SCHEMA)
-            options, errors = validate_options(res.json, fw, inp["scores"])
+            res = self.router.complete("plan_branches", msgs, schema=OPTIONS_SCHEMA, track=self.track)
+            options, errors = validate_options(res.json, fw, inp["scores"], diff, unfamiliar)
             if not errors:
-                out = {"options": options, "model": res.model, "ts": datetime.now().astimezone().isoformat(timespec="seconds")}
+                out = {"options": options, "model": res.model, "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+                       "difficulty": {"mode": diff.mode, "success_rate": inp["difficulty"]["success_rate"], "rated_nodes": diff.n}}  # fmt: skip
                 self._save(out)
                 return out
             msgs = [system, user, {"role": "assistant", "content": res.text},

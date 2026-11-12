@@ -24,6 +24,7 @@ from app.datastore.cache import rebuild_db
 from app.domains import Domain
 from app.lifecycle.debrief import Debrief
 from app.lifecycle.oral import OralExam
+from app.lifecycle.summary import Summarizer
 from app.lifecycle.nodes import NEXT_ACTION, RESCOPABLE, WORKING, LifecycleError, NodeRef, NodeStore, append_jsonl, autocommit, node_lock
 from app.lifecycle.tutor import Tutor, public_checker
 from app.llm.types import LLMError
@@ -50,10 +51,12 @@ class Lifecycle:
         self.store = NodeStore(data_root, track)
         self.router = router
         self.domain = domain
+        self.jobs = jobs
         self.tutor = Tutor(self.store, router, domain.name)
         self.debrief = Debrief(self.store, router, domain.name, self.tutor)
         self.oral = OralExam(self.store, router, domain, self.debrief, voice, jobs)
         self.debrief.oral_section = lambda ref: self.oral.debrief_view(ref)
+        self.summarizer = Summarizer(self.store, router, domain.name, self.debrief)
 
     @property
     def root(self) -> Path:
@@ -247,7 +250,7 @@ class Lifecycle:
     def _proof_state(self, ref: NodeRef) -> dict:
         s = self.store.session(ref, "proof", {})
         return {"submissions": s.get("submissions", []), "remediation_offer": s.get("remediation_offer", False),
-                "remediation_decision": s.get("remediation_decision")}  # fmt: skip
+                "remediation_decision": s.get("remediation_decision"), "remediation": s.get("remediation")}  # fmt: skip
 
     def proof_submit(self, jobs, node_id: int):
         """Copy the declared proof artifacts to proof/, then run the checker as a job. No retry penalty."""
@@ -323,16 +326,43 @@ class Lifecycle:
         fm = self.store.frontmatter(ref)
         return {"stage": str(fm.get("status")), "artifacts": [str(a) for a in fm.get("proof_artifacts") or []], "submissions": ps["submissions"],
                 "failed": sum(1 for s in ps["submissions"] if s.get("verdict") == "fail"), "remediation_offer": ps["remediation_offer"],
-                "remediation_decision": ps["remediation_decision"]}  # fmt: skip
+                "remediation_decision": ps["remediation_decision"], "remediation": self._proof_remediation(ref, ps)}  # fmt: skip
+
+    def _proof_remediation(self, ref: NodeRef, ps: dict) -> dict | None:
+        """The remediation record, with a dead build job surfaced as `failed` (the learner can accept again to retry)."""
+        if self.oral.remediator.refresh(ps.get("remediation")):
+            self.store.save_session(ref, "proof", ps)
+        return ps.get("remediation")
+
+    def _proof_remediation_ctx(self, ref: NodeRef, ps: dict) -> dict:
+        """The Planner's `remediation` input after repeated proof failures: every node subskill is implicated, with the failing tests as why."""
+        fm = self.store.frontmatter(ref)
+        last = next((s for s in reversed(ps["submissions"]) if s.get("verdict") == "fail"), {})
+        failing = [str(t.get("name")) for t in last.get("tests") or [] if not t.get("pass")]
+        n_fail = sum(1 for s in ps["submissions"] if s.get("verdict") == "fail")
+        why = f"the proof check failed {n_fail} times" + (f"; failing tests: {', '.join(failing)}" if failing else "")
+        subs = [str(x) for x in fm.get("subskills") or []]
+        return {
+            "parent": {"id": ref.id, "title": fm.get("title"), "domain": fm.get("domain"), "subskills": subs, "tier": fm.get("tier")},
+            "failed_items": [{"subskill": x, "score": None, "why": why} for x in subs],
+            "misconceptions": [],
+        }  # fmt: skip
 
     def remediation(self, node_id: int, accept: bool) -> dict:
-        """Record the learner's answer to the remediation offer. The remediation node itself is built by M8's Planner."""
+        """The learner's answer to the offer after 3 failed proof submissions (SPEC §7.5). Accepting spawns the remediation child (Planner
+        option + build job, like a failed oral); the parent stays in Proof so the learner may keep trying. Declining records it only."""
         ref = self.store.find(node_id)
         with node_lock(ref.track, ref.id):
             ps = self._proof_state(ref)
             if not ps["remediation_offer"]:
                 raise LifecycleError(409, f"a remediation offer appears after {REMEDIATION_AFTER} failed submissions")
+            rem = ps.get("remediation") or {}
+            if not accept and rem.get("status") in ("building", "ready"):
+                raise LifecycleError(409, "the remediation node is already being built")
             ps["remediation_decision"] = "accepted" if accept else "declined"
+            if accept and rem.get("status") not in ("building", "ready"):
+                ps["remediation"] = self.oral.remediator.spawn(ref, "proof", self._proof_remediation_ctx(ref, ps), self._proof_state,
+                                                               lambda r, d: self.store.save_session(r, "proof", d))  # fmt: skip
             self.store.save_session(ref, "proof", ps)
             append_jsonl(self.store.layout.remediation_path, {"ts": _now(), "node_id": ref.id, "decision": ps["remediation_decision"]})
         return self.proof_view(node_id)
@@ -375,13 +405,44 @@ class Lifecycle:
         with node_lock(ref.track, ref.id):
             self.store.require(ref, "debrief")
             self.store.transition(ref, "done")
+        self.queue_summary(ref)
         return self.summary(ref)
+
+    # --- SUMMARY.md (§3.2) ---------------------------------------------------------------------------------------
+    def queue_summary(self, ref: NodeRef) -> None:
+        """After a Debrief: the node's archive entry and SUMMARY.md, as a job (a light LLM call must not hold up the learner's click). Without
+        a job manager it runs inline. A failure only leaves SUMMARY.md as it was: the next Debrief or POST /api/summary/regenerate rebuilds it."""
+        def run(handle=None) -> None:
+            if handle:
+                handle.log(f"summarizing node {ref.id}")
+            self.summarizer.after_debrief(ref)
+
+        try:
+            if self.jobs is None:
+                run()
+            else:
+                self.jobs.submit("summarize", run, node_id=self.store.job_label(ref))
+        except Exception:  # noqa: BLE001 - never block or fail the learner's Debrief on the archive summary
+            pass
+
+    def summary_text(self) -> str:
+        p = self.store.layout.summary_path
+        return p.read_text(encoding="utf-8") if p.is_file() else ""
+
+    def regenerate_summary(self) -> str:
+        return self.summarizer.regenerate()
 
     # --- grading queue (§3.1) ----------------------------------------------------------------------------------
     def retry_grades(self, force: bool = False) -> int:
         """Retry due pending grades (on app start, periodically, or `force` ignoring the backoff). -> number applied."""
         def apply(row, result):
             (self.oral if row.get("task_type") == "grade_oral" else self.debrief).apply_queued(row, result)
+            try:
+                ref = self.store.find(int(row["node_id"]))
+                if self.store.status(ref) == "done":  # the entry was written with "grades pending": refresh it
+                    self.queue_summary(ref)
+            except (LifecycleError, TypeError, ValueError, KeyError):
+                pass
 
         done = self.router.retry_pending_grades(apply, now=float("inf") if force else None, track=self.track)
         return len(done)

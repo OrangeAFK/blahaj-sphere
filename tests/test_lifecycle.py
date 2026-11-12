@@ -26,7 +26,8 @@ GRADES = {"items": [{"id": "p3", "score": 2, "quote": "reflection", "rationale":
 
 ORAL_GRADES = {"items": [{"id": "o1", "score": 2, "quote": "it sets the corner", "rationale": "r1"},
                          {"id": "o2", "score": 3, "quote": "S11 is the reflection", "rationale": "r2"}], "misconceptions": []}  # fmt: skip
-ORAL_ANSWERS = ("it sets the corner frequency", "S11 is the reflection coefficient")
+_FULL = " because the resistor and the capacitor together set the time constant of the first order response, and the pole sits where the reactance equals the resistance"
+ORAL_ANSWERS = ("it sets the corner frequency" + _FULL, "S11 is the reflection coefficient" + _FULL)  # >= 25 words: no live probe (DECISIONS M8)
 
 
 def text_oral(lc, ad, grades=ORAL_GRADES, answers=ORAL_ANSWERS, node=901):

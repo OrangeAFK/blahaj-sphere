@@ -13,6 +13,7 @@ from app.builder.gate import GateContext
 from app.datastore.cache import DataStore, connect
 from app.datastore.events import read_events
 from app.datastore.layout import DataLayout
+from app.datastore.misconceptions import fold, read_records
 from app.onboarding.framework import Framework, FrameworkStore
 
 RECENT_NODES = 3  # §7.1 gate 4: "not evidenced in the last 3 nodes"
@@ -36,9 +37,13 @@ def _rows(root: Path, track: str, sql: str, args: tuple = ()) -> list[sqlite3.Ro
         return list(conn.execute(sql, (track, *args)))
 
 
+cache_rows = _rows  # public name for the other modules that read the track's rows of the cache (outcomes, graph)
+
+
 def open_misconceptions(root: Path, track: str) -> list[dict]:
-    return [{"text": r["text"], "subskill": r["subskill"]}
-            for r in _rows(root, track, "SELECT text, subskill FROM misconceptions WHERE track = ? AND resolved = 0 ORDER BY id")]  # fmt: skip
+    """Open misconceptions of the track, oldest first. Read from misconceptions.jsonl (the source of truth), NOT the cache: a misconception
+    logged while grading an oral must already be a target of the remediation build that starts in the same call (DECISIONS M8)."""
+    return [{"text": m["text"], "subskill": m["subskill"]} for m in fold(read_records(DataLayout(Path(root)).misconceptions_path, track)) if not m["resolved"]]
 
 
 def domain_scores(root: Path, track: str) -> dict[str, dict]:

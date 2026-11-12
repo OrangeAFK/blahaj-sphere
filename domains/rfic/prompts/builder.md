@@ -24,7 +24,7 @@ id: <given>
 slug: <given>
 title: "<imperative, specific>"
 parents: []
-kind: challenge
+kind: <given: the option's kind, challenge or remediation>
 domain: <given>
 subskills: [<given, dotted ids>]
 tier: <given>

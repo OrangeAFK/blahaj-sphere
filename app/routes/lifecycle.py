@@ -315,6 +315,30 @@ def rescope(node_id: int, body: RescopeBody, request: Request, m: Jobs) -> dict:
     return _call(lambda: _lc(request).rescope(m, node_id, body.reason_class, body.reason))
 
 
+class SummaryView(BaseModel):
+    text: str  # archive/SUMMARY.md of the active track ("" until the first Debrief completes)
+    tokens: int  # estimate (chars / 3.5)
+    cap: int  # SPEC §3.2
+
+
+@router.get("/summary", response_model=SummaryView, operation_id="getSummary")
+def get_summary(request: Request) -> dict:
+    """SUMMARY.md, the only history the Planner and Builder read (regenerated after each Debrief, at most 1,500 tokens)."""
+    from app.lifecycle.summary import TOKEN_CAP, estimate_tokens
+
+    text = _call(_lc(request).summary_text)
+    return {"text": text, "tokens": estimate_tokens(text) if text else 0, "cap": TOKEN_CAP}
+
+
+@router.post("/summary/regenerate", response_model=SummaryView, operation_id="regenerateSummary")
+def regenerate_summary(request: Request) -> dict:
+    """Rebuild SUMMARY.md from the finished nodes' entries (missing entries are built by code, no LLM call)."""
+    from app.lifecycle.summary import TOKEN_CAP, estimate_tokens
+
+    text = _call(_lc(request).regenerate_summary)
+    return {"text": text, "tokens": estimate_tokens(text), "cap": TOKEN_CAP}
+
+
 @router.get("/grading/pending", operation_id="getPendingGrades")
 def pending_grades(request: Request) -> list[dict]:
     return _call(_lc(request).pending_grades)

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.domains import load_domain
 from app.jobs.deps import manager_for
-from app.routes import builder, health, jobs, lifecycle, llm, onboarding, preflight, settings, scores, tracks
+from app.routes import builder, graph, health, jobs, lifecycle, llm, onboarding, preflight, settings, scores, tracks
 
 UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
 
@@ -73,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(builder.router, prefix="/api")
     app.include_router(lifecycle.router, prefix="/api")
     app.include_router(scores.router, prefix="/api")
+    app.include_router(graph.router, prefix="/api")
     app.include_router(tracks.router, prefix="/api")
     app.state.domain = load_domain()
     if app.state.domain and app.state.domain.router:

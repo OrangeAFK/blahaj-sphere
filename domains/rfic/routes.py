@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.jobs.deps import get_running_manager
 from app.jobs.manager import JobManager
 from app.jobs.store import Job, JobHandle
+from app.settings import dev_routes_enabled
 from domains.rfic.container import ContainerManager, default_tracks_root
 from domains.rfic.learner import LearnerContainer, learner_for
 from domains.rfic.tools_mcp.tools import TOOL_ERRORS, RficTools
@@ -32,6 +33,12 @@ def node_token(node: str | None) -> str | None:
     from app.tracks.scope import current_scope
 
     return f"{current_scope().track}/archive/nodes/{node}"
+
+
+def require_dev_routes() -> None:
+    """404 (as if the route did not exist) unless BLAHAJ_DEV_ROUTES=1: the check runs per request, so it cannot be left on by an import."""
+    if not dev_routes_enabled():
+        raise HTTPException(404, "Not Found")
 
 
 def get_containers(request: Request) -> ContainerManager:
@@ -148,10 +155,11 @@ def build_image(c: Containers, jobs: Jobs) -> Job:
     return start_image_build(c, jobs)
 
 
-@router.post("/run", response_model=Job, operation_id="runRficSim")
+@router.post("/run", response_model=Job, operation_id="runRficSim", include_in_schema=False, dependencies=[Depends(require_dev_routes)])
 def run_sim(body: RunRequest, c: Containers, jobs: Jobs) -> Job:
-    """Builder/dev tool (the UI does not call it): run a sim as a job in the Builder container, which also sees `_hidden/`.
-    Path rules as for the MCP tools, pinned to `node`. The learner's Run simulation is the lifecycle `run_commands`, in the learner container."""
+    """DEV ONLY (BLAHAJ_DEV_ROUTES=1; 404 otherwise, and absent from the OpenAPI schema): run a sim as a job in the Builder container, which
+    also sees `_hidden/` incl. the reference solution, so it must never be reachable in a learner's session. Path rules as for the MCP tools,
+    pinned to `node`. The learner's Run simulation is the lifecycle `run_commands`, in the learner container."""
     node = node_token(body.node)
     tools = RficTools(c, node=node)
     method, kwargs = {

@@ -216,7 +216,7 @@ def _oral_on_b(root: Path, B: str, A: str, a_tree: dict, a_events: list) -> None
         g = grades({"o1": 0, "o2": 3, "o7": 3}, mis=[{"text": "L-match always raises Q", "subskill": "matching.l_network"}])
         tmp = Path(tempfile.mkdtemp(prefix="m75-oral-"))
         lc, _, _ = make(root, tmp, {"grade_prelab_explain": [GRADES], "grade_oral": [g], "plan_branches": [{"options": [rem]}]}, track=B)
-        lc.oral.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: SimpleNamespace(status="done", error=None)))
+        lc.oral.remediator.jobs = SimpleNamespace(store=SimpleNamespace(get=lambda _id: SimpleNamespace(status="done", error=None)))
         ref = to_oral(lc, CLEAN)
         lc.oral.start(ref, "text", False)
         run_exam(lc, ref)

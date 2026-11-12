@@ -348,6 +348,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/planner/difficulty": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Difficulty
+         * @description The difficulty-control state the next Planner call will use (SPEC §7.7): mode, rolling success rate over the last 8 challenge nodes, sizing hints.
+         */
+        get: operations["getPlannerDifficulty"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/build": {
         parameters: {
             query?: never;
@@ -839,6 +859,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Summary
+         * @description SUMMARY.md, the only history the Planner and Builder read (regenerated after each Debrief, at most 1,500 tokens).
+         */
+        get: operations["getSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/summary/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate Summary
+         * @description Rebuild SUMMARY.md from the finished nodes' entries (missing entries are built by code, no LLM call).
+         */
+        post: operations["regenerateSummary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/grading/pending": {
         parameters: {
             query?: never;
@@ -885,6 +945,26 @@ export interface paths {
          * @description Per-domain tier and mastery of the ACTIVE track, from events.jsonl (the cache's scores table).
          */
         get: operations["getScores"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Graph
+         * @description Nodes + parent edges of the ACTIVE track, with status, domain, tier and (for finished work) outcome.
+         */
+        get: operations["getGraph"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1172,27 +1252,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/rfic/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run Sim
-         * @description Builder/dev tool (the UI does not call it): run a sim as a job in the Builder container, which also sees `_hidden/`.
-         *     Path rules as for the MCP tools, pinned to `node`. The learner's Run simulation is the lifecycle `run_commands`, in the learner container.
-         */
-        post: operations["runRficSim"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1421,6 +1480,49 @@ export interface components {
         GoalsBody: {
             /** Text */
             text: string;
+        };
+        /** GraphEdge */
+        GraphEdge: {
+            /** Source */
+            source: number;
+            /** Target */
+            target: number;
+        };
+        /** GraphNode */
+        GraphNode: {
+            /** Id */
+            id: number;
+            /** Dir */
+            dir: string;
+            /** Title */
+            title?: string | null;
+            /** Kind */
+            kind?: string | null;
+            /** Domain */
+            domain?: string | null;
+            /** Tier */
+            tier?: number | null;
+            /** Status */
+            status: string;
+            /** Provisional */
+            provisional: boolean;
+            /** Outcome */
+            outcome?: string | null;
+            /** Size Est Min */
+            size_est_min?: number | null;
+            /** Subskills */
+            subskills: string[];
+            /** Parents */
+            parents: number[];
+        };
+        /** GraphView */
+        GraphView: {
+            /** Track */
+            track: string;
+            /** Nodes */
+            nodes: components["schemas"]["GraphNode"][];
+            /** Edges */
+            edges: components["schemas"]["GraphEdge"][];
         };
         /** GuiRequest */
         GuiRequest: {
@@ -1656,6 +1758,10 @@ export interface components {
             model: string;
             /** Ts */
             ts: string;
+            /** Difficulty */
+            difficulty?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** PrelabBody */
         PrelabBody: {
@@ -1760,22 +1866,6 @@ export interface components {
              */
             keep_goals: boolean;
         };
-        /** RunRequest */
-        RunRequest: {
-            /**
-             * Tool
-             * @enum {string}
-             */
-            tool: "ngspice" | "openems" | "python";
-            /** Node */
-            node: string;
-            /** Path */
-            path: string;
-            /** Pdk */
-            pdk?: string | null;
-            /** Timeout Min */
-            timeout_min?: number | null;
-        };
         /** Settings */
         Settings: {
             /**
@@ -1809,6 +1899,15 @@ export interface components {
             assist_reveal: boolean;
             /** Model */
             model?: string | null;
+        };
+        /** SummaryView */
+        SummaryView: {
+            /** Text */
+            text: string;
+            /** Tokens */
+            tokens: number;
+            /** Cap */
+            cap: number;
         };
         /** TrackView */
         TrackView: {
@@ -2469,6 +2568,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlannerOptions"];
+                };
+            };
+        };
+    };
+    getPlannerDifficulty: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -3428,6 +3549,46 @@ export interface operations {
             };
         };
     };
+    getSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryView"];
+                };
+            };
+        };
+    };
+    regenerateSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryView"];
+                };
+            };
+        };
+    };
     getPendingGrades: {
         parameters: {
             query?: never;
@@ -3488,6 +3649,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DomainScoreView"][];
+                };
+            };
+        };
+    };
+    getGraph: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphView"];
                 };
             };
         };
@@ -4004,39 +4185,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
-                };
-            };
-        };
-    };
-    runRficSim: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RunRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Job"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

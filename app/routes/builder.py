@@ -35,6 +35,7 @@ class PlannerOptions(BaseModel):
     options: list[BranchOption]
     model: str
     ts: str
+    difficulty: dict | None = None  # {mode, success_rate, rated_nodes} the options were planned under
 
 
 class BuildBody(BaseModel):
@@ -86,6 +87,16 @@ def generate_options(request: Request) -> dict:
         raise HTTPException(e.status, e.message) from None
     except LLMError as e:
         raise HTTPException(502, str(e)) from None
+
+
+@router.get("/planner/difficulty", operation_id="getPlannerDifficulty")
+def get_difficulty(request: Request) -> dict:
+    """The difficulty-control state the next Planner call will use (SPEC §7.7): mode, rolling success rate over the last 8 challenge nodes, sizing hints."""
+    try:
+        inp = _planner(request).planner_input()
+    except PlannerError as e:
+        raise HTTPException(e.status, e.message) from None
+    return {"difficulty": inp["difficulty"], "sizing": inp["sizing"]}
 
 
 @router.get("/planner/options", response_model=PlannerOptions, operation_id="getPlannerOptions")

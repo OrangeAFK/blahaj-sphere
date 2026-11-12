@@ -11,6 +11,14 @@ class Settings(BaseModel):
     claude_model: str = ""
 
 
+DEV_ROUTES_ENV = "BLAHAJ_DEV_ROUTES"
+
+
+def dev_routes_enabled() -> bool:
+    """Developer-only HTTP routes (e.g. POST /api/rfic/run, which can reach a node's reference solution) exist only when this is set to 1."""
+    return os.environ.get(DEV_ROUTES_ENV) == "1"
+
+
 def data_dir() -> Path:
     return Path(os.environ.get("BLAHAJ_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 

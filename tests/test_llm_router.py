@@ -66,7 +66,7 @@ def test_shipped_routing_yaml_is_valid_and_complete():
 def test_mock_call_logs_and_counts(tmp_path):
     r, _ = make_router(tmp_path, {"plan_branches": {"chain": [{"backend": "mock", "model": "m"}]}})
     res = r.complete("plan_branches", MSG, node_id=7)
-    assert res.json["options"][0]["tier"] == 1 and len(res.json["options"]) == 2 and res.backend == "mock"
+    assert res.json["options"][0]["tier"] == 3 and len(res.json["options"]) == 2 and res.backend == "mock"
     (call,) = r.store.calls()
     assert (call["task_type"], call["backend"], call["status"], call["node_id"]) == ("plan_branches", "mock", "ok", 7)
     assert r.store.count("mock", "m") == 1

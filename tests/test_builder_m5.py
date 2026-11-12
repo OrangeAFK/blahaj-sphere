@@ -84,9 +84,12 @@ def test_recent_nodes_evidence_removes_stale_and_diagnostic_is_not_a_node(data):
 
 
 def test_misconceptions_come_first_and_targets_are_capped(data):
-    with closing(sqlite3.connect(DataLayout(data).cache_path)) as c, c:
-        c.execute("INSERT INTO misconceptions (track, id, text, subskill, node_id, resolved) VALUES ('rfic-default', 1, 'Q only rises', 'passives.inductor_q', 1, 0)")
-        c.execute("INSERT INTO misconceptions (track, id, text, subskill, node_id, resolved) VALUES ('rfic-default', 2, 'old', 'noise.sources', 1, 1)")
+    from app.datastore.misconceptions import add_misconception, resolve_misconception
+
+    path = DataLayout(data).misconceptions_path
+    add_misconception(path, track=T, node_id=1, subskill="passives.inductor_q", text="Q only rises")
+    add_misconception(path, track=T, node_id=1, subskill="noise.sources", text="old")
+    resolve_misconception(path, 2, track=T, node_id=2, event_id="e")  # no rebuild_db: the log is read directly
     ctx = interleaving_context(data, T, {"subskills": []}, limit=3)
     assert ctx.open_misconceptions == [{"text": "Q only rises", "subskill": "passives.inductor_q"}]
     assert ctx.stale_subskills == ["matching.l_network", "noise.figure_cascade"]
@@ -104,7 +107,7 @@ def test_learner_state(data):
 
 def _opt(**kw):
     return {"title": "Hand-design an L-match", "why_now": "goals need matching", "kind": "challenge", "domain": "matching",
-            "subskills": ["matching.l_network"], "tier": 2, "size_est_min": 40, **kw}  # fmt: skip
+            "subskills": ["matching.l_network"], "tier": 3, "size_est_min": 40, **kw}  # fmt: skip
 
 
 class Agent(Scripted):
@@ -139,7 +142,7 @@ def test_planner_returns_and_stores_valid_options(data, tmp_path):
 
 def test_planner_repairs_once_with_errors_then_fails(data, tmp_path):
     bad = {"options": [_opt(subskills=["matching.nope"]), _opt(domain="devices", subskills=["devices.biasing"], tier=2)]}
-    ad = Scripted({"plan_branches": [bad, {"options": [_opt(), _opt(tier=1)]}]})
+    ad = Scripted({"plan_branches": [bad, {"options": [_opt(), _opt(title="Another")]}]})
     assert len(Planner(data, T, _router(tmp_path, ad), "rfic").generate()["options"]) == 2
     fix = ad.requests[1].messages[-1]["content"]
     assert "unknown subskills ['matching.nope']" in fix and "tier must be an integer 1..1" in fix  # devices is at T1

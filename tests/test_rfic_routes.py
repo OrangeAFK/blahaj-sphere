@@ -18,6 +18,11 @@ def client(tmp_path, monkeypatch, fake, fake_learner):
         yield c
 
 
+@pytest.fixture
+def dev_routes(monkeypatch):
+    monkeypatch.setenv("BLAHAJ_DEV_ROUTES", "1")
+
+
 def wait_job(client, job_id, timeout=5):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -30,10 +35,24 @@ def wait_job(client, job_id, timeout=5):
 
 def test_domain_routes_are_mounted_only_under_rfic(client):
     paths = set(client.get("/openapi.json").json()["paths"])
-    assert {"/api/rfic/container", "/api/rfic/gui", "/api/rfic/jupyter", "/api/rfic/run", "/api/rfic/image/build"} <= paths
+    assert {"/api/rfic/container", "/api/rfic/gui", "/api/rfic/jupyter", "/api/rfic/image/build"} <= paths
+    assert "/api/rfic/run" not in paths  # dev-only: not part of the published API (and so not of the generated client)
 
 
-def test_run_route_makes_a_streaming_job_that_succeeds(client, fake, nodes_root):
+def test_run_route_is_dev_only(client, fake, nodes_root, monkeypatch):
+    """/api/rfic/run reaches the Builder container, i.e. a node's reference solution: 404 unless BLAHAJ_DEV_ROUTES=1 (M8)."""
+    (nodes_root / "n1" / "workspace" / "rc.sp").write_text("x")
+    body = {"tool": "ngspice", "node": "t1/archive/nodes/n1", "path": "workspace/rc.sp"}
+    for value in (None, "", "0", "true"):  # only the exact value 1 enables it
+        monkeypatch.delenv("BLAHAJ_DEV_ROUTES", raising=False) if value is None else monkeypatch.setenv("BLAHAJ_DEV_ROUTES", value)
+        assert client.post("/api/rfic/run", json=body).status_code == 404
+    assert not fake.exec_calls and client.get("/api/jobs").json() == []  # nothing ran, nothing was queued
+    monkeypatch.setenv("BLAHAJ_DEV_ROUTES", "1")
+    assert client.post("/api/rfic/run", json=body).status_code == 200
+    assert "/api/rfic/run" not in client.get("/openapi.json").json()["paths"]  # still hidden from the schema when enabled
+
+
+def test_run_route_makes_a_streaming_job_that_succeeds(client, fake, nodes_root, dev_routes):
     (nodes_root / "n1" / "workspace" / "rc.sp").write_text("x")
     fake.exec_lines = ["Batch mode\n"]
     r = client.post("/api/rfic/run", json={"tool": "ngspice", "node": "t1/archive/nodes/n1", "path": "workspace/rc.sp", "pdk": "sky130A"})
@@ -45,14 +64,14 @@ def test_run_route_makes_a_streaming_job_that_succeeds(client, fake, nodes_root)
     assert fake.exec_calls[0]["pdk"] == "sky130A"
 
 
-def test_run_route_failed_sim_marks_job_failed(client, fake, nodes_root):
+def test_run_route_failed_sim_marks_job_failed(client, fake, nodes_root, dev_routes):
     (nodes_root / "n1" / "workspace" / "sim.py").write_text("x")
     fake.next_result = ExecResult(2, "", "Traceback")
     job = wait_job(client, client.post("/api/rfic/run", json={"tool": "openems", "node": "t1/archive/nodes/n1", "path": "workspace/sim.py"}).json()["id"])
     assert job["status"] == "failed" and "exit 2" in job["error"]
 
 
-def test_run_route_cannot_leave_the_node(client):
+def test_run_route_cannot_leave_the_node(client, dev_routes):
     r = client.post("/api/rfic/run", json={"tool": "python", "node": "t1/archive/nodes/n1", "path": "../n2/workspace/x.py"})
     job = wait_job(client, r.json()["id"])  # rejected inside the job, recorded as failure
     assert job["status"] == "failed" and "outside" in job["error"]
