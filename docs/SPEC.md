@@ -207,9 +207,11 @@ items:
     question: "..."
     anchors: {0: "...", 1: "...", 2: "...", 3: "..."}
     probes: ["...", "..."]
+    key_terms: ["...", "...", "..."]   # 3-8 words/phrases a good answer uses; hidden, Builder-written
     interleaved: false
 ```
 At least one item with `interleaved: true` when eligible (§7.1 gate 4).
+`key_terms` drive probing (§7.6): when an answer (with the answers to earlier probes on the same item) uses **fewer than half** of an item's `key_terms`, the examiner is asked for a probe even if the answer is long and confident. They are matched against the transcript case- and punctuation-insensitively. Like `anchors`, they are never shown to the learner or the examiner; gate G0 requires them on every oral item of a new build (nodes released before M8.1 have none and simply get no term-based probes).
 
 ### 5.5 `hints.yaml`
 ```yaml
@@ -300,7 +302,7 @@ Submit → copy `proof_artifacts` to `proof/` → checker job → pass/fail. **N
 ### 7.6 Oral (push-to-talk voice, text fallback)
 - Hold Space or on-screen button; UI sends start/stop; backend records via `sounddevice`, transcribes with faster-whisper using `initial_prompt` = node `vocab` + domain `vocab.txt`. Piper reads questions (toggle).
 - Length: all numeric prelab items within tolerance → **2 core questions**; else **5**. Plus **1 interleaved** question when one exists in the key.
-- Core and interleaved questions are spoken **straight from `oral_key.yaml`** (no model call); the next question's Piper audio is pre-generated while the learner answers. The live examiner (light) is called only for **probes** (after a thin or hedged answer, max 2 per item) and receives the item's question and probes but **not anchors**.
+- Core and interleaved questions are spoken **straight from `oral_key.yaml`** (no model call); the next question's Piper audio is pre-generated while the learner answers. The live examiner (light) is called only for **probes** (after a thin or hedged answer, or one covering fewer than half of the item's hidden `key_terms` (§5.4); max 2 per item) and receives the item's question and probes but **not anchors**.
 - Grading (heavy, pinned) over full transcript → §5.7. **Pass** = mean ≥ 2.0 over non-interleaved items and no non-interleaved item scored 0. Interleaved items count toward scores but never fail the node; a 0 logs a misconception.
 - Fail → remediation child node (Planner, kind=remediation) + misconceptions logged; parent marked done-with-remediation.
 

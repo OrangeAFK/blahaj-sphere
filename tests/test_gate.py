@@ -43,9 +43,9 @@ PRELAB_KEY = {
 ORAL_KEY = {
     "items": [
         {"id": "o1", "subskill": "filters.rc_corner", "tier": 1, "question": "why?", "anchors": {0: "a", 1: "b", 2: "c", 3: "d"},
-         "probes": ["and then?"], "interleaved": False},
+         "probes": ["and then?"], "key_terms": ["corner", "time constant", "capacitor"], "interleaved": False},
         {"id": "o2", "subskill": "sparams.reflection_coefficient", "tier": 1, "question": "what if?",
-         "anchors": {0: "a", 1: "b", 2: "c", 3: "d"}, "probes": ["more?"], "interleaved": False},
+         "anchors": {0: "a", 1: "b", 2: "c", 3: "d"}, "probes": ["more?"], "key_terms": ["reflection", "impedance", "mismatch"], "interleaved": False},
     ]
 }  # fmt: skip
 HINTS = {"ladders": [{"subskill": s, "hints": ["think", "narrower", "method"]} for s in ("filters.rc_corner", "sparams.reflection_coefficient")]}

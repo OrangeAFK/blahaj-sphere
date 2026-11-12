@@ -130,6 +130,18 @@ def _check_anchors(item: dict, where: str, errors: list[str]) -> None:
         errors.append(f"{where}: `anchors` must map exactly 0,1,2,3 to non-empty strings")
 
 
+KEY_TERMS_MIN, KEY_TERMS_MAX = 3, 8
+
+
+def _check_key_terms(item: dict, where: str, errors: list[str]) -> None:
+    """SPEC §5.4: `key_terms` = the words/phrases a good answer to the question uses; the oral flow probes an answer that covers fewer than
+    half of them. Never shown to the learner or the examiner."""
+    kt = item.get("key_terms")
+    if (not isinstance(kt, list) or not all(isinstance(t, str) and t.strip() for t in kt) or not KEY_TERMS_MIN <= len(kt) <= KEY_TERMS_MAX
+            or len({" ".join(t.lower().split()) for t in kt}) != len(kt)):  # fmt: skip
+        errors.append(f"{where}: `key_terms` must be {KEY_TERMS_MIN}-{KEY_TERMS_MAX} distinct non-empty strings (terms a good answer would use)")
+
+
 # ---- G0: structure ----
 
 
@@ -223,6 +235,7 @@ def _structure(node: Path, errors: list[str], warnings: list[str]) -> dict | Non
             errors.append(f"{where}: `interleaved` must be true or false")
         if not isinstance(it.get("probes"), list) or not it["probes"]:
             errors.append(f"{where}: `probes` must be a non-empty list")
+        _check_key_terms(it, where, errors)
         _check_anchors(it, where, errors)
 
     sources = _declared_sources(node, prelab_items, errors)

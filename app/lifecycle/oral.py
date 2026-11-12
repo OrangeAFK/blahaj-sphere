@@ -57,6 +57,32 @@ def wants_probe(answer: str) -> bool:
     return len(answer.split()) < PROBE_BELOW_WORDS or bool(HEDGES.search(answer))
 
 
+def _squash(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", s.lower())
+
+
+def _term_in(term: str, spaced: str, squashed: str) -> bool:
+    """Whole-word match on normalized text; for terms of 3+ letters also a spacing/hyphen-insensitive substring match ("de-embedding" ~ "de embedding",
+    "capacitance" ~ "capacitances"), since the transcript is speech-to-text. Shorter terms ("Q", "gm") only match as whole words."""
+    n = _qnorm(term)
+    if not n:
+        return False
+    return f" {n} " in spaced or (len(_squash(term)) >= 3 and _squash(term) in squashed)
+
+
+def key_term_coverage(answer: str, key_terms) -> tuple[int, int]:
+    """(terms the answer uses, total terms) for an oral item's hidden `key_terms` (SPEC §5.4). (0, 0) when the item has none (older nodes)."""
+    terms = [t for t in key_terms or [] if isinstance(t, str) and t.strip()]
+    spaced, squashed = f" {_qnorm(answer)} ", _squash(answer)
+    return sum(1 for t in terms if _term_in(t, spaced, squashed)), len(terms)
+
+
+def misses_key_terms(answer: str, key_terms) -> bool:
+    """True when the answer covers FEWER THAN HALF of the item's key_terms (exactly half is enough). No key_terms -> False."""
+    hit, total = key_term_coverage(answer, key_terms)
+    return total > 0 and 2 * hit < total
+
+
 def oral_verdict(results: list[dict]) -> dict:
     """§7.6 pass rule over graded items: mean >= 2.0 over the non-interleaved ones and none of them scored 0.
     Interleaved items count toward scores elsewhere but never fail the node."""
@@ -208,6 +234,8 @@ class OralExam:
         llm_s = time.perf_counter() - t_llm if called else 0.0
         n = len(st["turns"]) + 1
         turn = {"n": n, "role": "examiner", "text": say, "kind": kind, "item_id": item_id, "source": source, "audio": False}
+        if kind == "probe":  # why it was asked (never exposed: the public turn has a fixed field list)
+            turn["trigger"] = st.pop("last_probe_trigger", None)
         tts_s, pregen = 0.0, False
         if st["tts"] and self.voice is not None:
             try:
@@ -240,22 +268,28 @@ class OralExam:
         called = False
         if cur["probes"] < MAX_PROBES:
             answer = next((t["text"] for t in reversed(st["turns"]) if t["role"] == "learner"), "")
-            if wants_probe(answer):
+            # coverage counts everything the learner said on this item (an answer plus the answers to earlier probes)
+            on_item = " ".join(t["text"] for t in st["turns"] if t["role"] == "learner" and t.get("item_id") == items[i]["id"])
+            thin = wants_probe(answer)
+            terms = not thin and misses_key_terms(on_item, items[i].get("key_terms"))
+            if thin or terms:
                 called = True
-                probe = self._probe(ref, st, items[i], cur["probes"])
+                probe = self._probe(ref, st, items[i], cur["probes"], force=terms)
                 if probe is not None:
                     cur["probes"] += 1
+                    st["last_probe_trigger"] = "key_terms" if terms else "thin_or_hedged"
                     return probe[0], items[i]["id"], "probe", probe[1], True
         if i >= last:
             return CLOSING, items[-1]["id"], "done", "key", called
         cur["i"], cur["probes"] = i + 1, 0
         return items[i + 1]["question"], items[i + 1]["id"], "question", "key", called
 
-    def _probe(self, ref: NodeRef, st: dict, item: dict, used: int) -> tuple[str, str] | None:
+    def _probe(self, ref: NodeRef, st: dict, item: dict, used: int, force: bool = False) -> tuple[str, str] | None:
         """A live probe for `item` -> (text, source) or None (the examiner found the answer sufficient, or there is nothing to ask).
-        Examiner outage or unusable reply -> the key's own probe number `used` (source "fallback"), if the key has one."""
+        Examiner outage or unusable reply -> the key's own probe number `used` (source "fallback"), if the key has one.
+        `force` = the answer missed the item's key_terms: the examiner saying "none" does not cancel the probe, the key's own probe is used."""
         raw = self._ask_examiner(ref, st, item, used)
-        if isinstance(raw, dict) and raw.get("kind") == "none":
+        if isinstance(raw, dict) and raw.get("kind") == "none" and not force:
             return None
         if isinstance(raw, dict) and raw.get("kind") == "probe" and isinstance(raw.get("say"), str) and raw["say"].strip():
             return raw["say"].strip()[:600], "llm"

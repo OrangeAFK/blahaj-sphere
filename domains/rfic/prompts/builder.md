@@ -159,8 +159,11 @@ items:
 ```
 
 ### `_hidden/oral_key.yaml`
-3–4 items: `id, subskill, tier, question, anchors {0,1,2,3}, probes [2 follow-ups], interleaved (true|false)`.
+3–4 items: `id, subskill, tier, question, anchors {0,1,2,3}, probes [2 follow-ups], key_terms [3-8], interleaved (true|false)`.
 Questions test understanding of THIS build (why, what-if, trade-offs), not recall of numbers.
+`key_terms`: 3-8 distinct words or short phrases a good answer to THAT question would say (concepts and names such as
+"shunt capacitance", "open-short", "reference plane"; no numbers, no full sentences). The oral probes an answer that uses fewer
+than half of them, so list what a correct answer cannot avoid saying, not rare synonyms. The learner and the examiner never see them.
 
 ### `hints.yaml`
 ```yaml

@@ -204,7 +204,7 @@ class FakeBuilder:
         (n / "checker.py").write_text(CHECKER)
         ok = json.loads(json.dumps(ORAL_KEY))
         ok["items"].append({"id": "o3", "subskill": self.interleave, "tier": 1, "question": "link?",
-                            "anchors": {0: "a", 1: "b", 2: "c", 3: "d"}, "probes": ["p"], "interleaved": True})  # fmt: skip
+                            "anchors": {0: "a", 1: "b", 2: "c", 3: "d"}, "probes": ["p"], "key_terms": ["link", "match", "noise"], "interleaved": True})  # fmt: skip
         for name, doc in (("_hidden/prelab_key.yaml", PRELAB_KEY), ("_hidden/oral_key.yaml", ok), ("hints.yaml", hints)):
             (n / name).write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
         if self.broken > 0:
