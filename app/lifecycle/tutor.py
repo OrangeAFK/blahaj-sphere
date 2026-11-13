@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from app.builder.gate import _number_tokens, _same_value, _trivial
+from app.library.service import excerpt_for_prompt, retrieve
 from app.lifecycle.nodes import WORKING, LifecycleError, NodeRef, NodeStore, node_lock
 from app.llm.types import LLMError
 
@@ -24,7 +25,8 @@ HISTORY_TURNS = 10
 MAX_MESSAGE = 2_000
 REF_LINE_MIN = 30  # a reference-solution line this long, verbatim in a reply, counts as a leak
 
-TUTOR_SCHEMA = {"type": "object", "properties": {"reply": {"type": "string"}, "hint": {"type": ["object", "null"]}}, "required": ["reply"]}
+TUTOR_SCHEMA = {"type": "object", "properties": {"reply": {"type": "string"}, "hint": {"type": ["object", "null"]}, "citations": {"type": "array"}},
+                "required": ["reply"]}  # fmt: skip
 SHOW_ME_SCHEMA = {"type": "object", "properties": {"explanation": {"type": "string"}, "subskills": {"type": "array"}},
                   "required": ["explanation", "subskills"]}  # fmt: skip
 REDACTED_REPLY = ("I can't hand you that value or line. Tell me which quantity you would compute it from and what you get with your "
@@ -91,7 +93,13 @@ class Tutor:
         return [l for l in (doc or {}).get("ladders") or [] if isinstance(l, dict) and isinstance(l.get("hints"), list)]
 
     # --- context ----------------------------------------------------------------------------------------
-    def context(self, ref: NodeRef) -> dict:
+    def library_hits(self, ref: NodeRef, message: str = "") -> list[dict]:
+        """Top-5 passages (SPEC §10) for what the learner just said, in the node's own terms. [] when the library is empty."""
+        fm = self.store.frontmatter(ref)
+        subs = " ".join(str(x).replace(".", " ").replace("_", " ") for x in fm.get("subskills") or [])
+        return retrieve(self.store.root, f"{message}\n{fm.get('title') or ''} {subs}")
+
+    def context(self, ref: NodeRef, library: list[dict] | None = None) -> dict:
         """§7.4 backend-injected context. Reads only learner-visible paths; nothing under _hidden/."""
         fm = self.store.frontmatter(ref)
         ans = ref.path / "prelab_answers.yaml"
@@ -104,7 +112,7 @@ class Tutor:
             "hints_used": used,
             "workspace": workspace_texts(ref),
             "checker_result": public_checker(self.store.session(ref, "checker", None)),
-            "library": [],  # library chunks arrive with M9
+            "library": excerpt_for_prompt(library or []),
         }
 
     # --- hints ------------------------------------------------------------------------------------------
@@ -176,15 +184,27 @@ class Tutor:
         if len(message) > MAX_MESSAGE:
             raise LifecycleError(422, f"message is longer than {MAX_MESSAGE} characters")
         st = self._state(ref)
-        ctx = self.context(ref)
+        hits = self.library_hits(ref, message)
         history = st["messages"][-HISTORY_TURNS:]
         convo = "\n".join(f"{'Learner' if m['role'] == 'user' else 'Tutor'}: {m['content']}" for m in history if m.get("kind", "chat") == "chat")
         system = (PROMPTS / "tutor.md").read_text(encoding="utf-8").replace("{domain_pack}", self.domain_pack)
-        user = ("INPUTS (JSON):\n" + json.dumps(ctx, ensure_ascii=False) + "\n\nCHAT SO FAR:\n" + (convo or "(none)")
-                + "\n\nLearner now says:\n" + message)  # fmt: skip
-        for _ in range(3):  # free models sometimes return an empty body (DECISIONS M6a): ask again
+
+        def ask(hits: list[dict]):
+            ctx = self.context(ref, hits)
+            user = ("INPUTS (JSON):\n" + json.dumps(ctx, ensure_ascii=False) + "\n\nCHAT SO FAR:\n" + (convo or "(none)")
+                    + "\n\nLearner now says:\n" + message)  # fmt: skip
             res = self.router.complete("tutor_chat", [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                                       schema=TUTOR_SCHEMA, node_id=ref.id)  # fmt: skip
+                                       schema=TUTOR_SCHEMA, node_id=ref.id, library_text=bool(hits))  # fmt: skip
+            return ctx, res
+
+        for _ in range(3):  # free models sometimes return an empty body (DECISIONS M6a): ask again
+            try:
+                ctx, res = ask(hits)
+            except LLMError:
+                if not hits:
+                    raise
+                hits = []  # privacy (SPEC §3): no backend allowed to see library text answered; ask again without it
+                ctx, res = ask(hits)
             j = res.json if isinstance(res.json, dict) else None
             if j and isinstance(j.get("reply"), str) and j["reply"].strip():
                 break
@@ -196,6 +216,7 @@ class Tutor:
         if redacted:
             reply = REDACTED_REPLY
         hint = self._accept_hint(ref, j.get("hint")) if not redacted else None
+        citations = [] if redacted else self._accept_citations(j.get("citations"), hits)
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         with node_lock(ref.track, ref.id):
             st = self._state(ref)  # re-read: a hint reveal may have happened meanwhile
@@ -203,9 +224,21 @@ class Tutor:
                 st["hints_used"][hint["subskill"]] = max(int(st["hints_used"].get(hint["subskill"], 0)), hint["index"] + 1)
             st["messages"] += [{"role": "user", "content": message, "ts": now, "kind": "chat"},
                                {"role": "assistant", "content": reply, "ts": now, "kind": "chat", "hint": hint, "redacted": redacted,
-                                "model": res.model}]  # fmt: skip
+                                "citations": citations, "model": res.model}]  # fmt: skip
             self.store.save_session(ref, "tutor", st)
-        return {"reply": reply, "hint": hint, "redacted": redacted, "model": res.model}
+        return {"reply": reply, "hint": hint, "redacted": redacted, "citations": citations, "model": res.model}
+
+    @staticmethod
+    def _accept_citations(raw, hits: list[dict]) -> list[dict]:
+        """Only a {book_id, page} that was among the passages the tutor was shown counts as a citation (no invented pages)."""
+        shown = {(h["book_id"], h["page"]): h for h in hits}
+        out, seen = [], set()
+        for c in raw if isinstance(raw, list) else []:
+            key = (c.get("book_id"), c.get("page")) if isinstance(c, dict) else None
+            if key in shown and key not in seen:
+                seen.add(key)
+                out.append({"book_id": key[0], "page": key[1], "title": shown[key]["title"]})
+        return out
 
     def _accept_hint(self, ref: NodeRef, hint) -> dict | None:
         """Ladder order is tracked by code (§7.4): a hint counts only if it is the next unused rung of a real ladder."""
@@ -220,7 +253,7 @@ class Tutor:
 
     def history(self, ref: NodeRef) -> dict:
         st = self._state(ref)
-        return {"messages": [{k: m.get(k) for k in ("role", "content", "ts", "kind", "hint", "redacted")} for m in st["messages"]],
+        return {"messages": [{k: m.get(k) for k in ("role", "content", "ts", "kind", "hint", "redacted", "citations")} for m in st["messages"]],
                 "hints": self.hints_view(ref), "show_me_used": sorted(st["reveals"])}  # fmt: skip
 
     # --- show me (heavy, _hidden/ access) ---------------------------------------------------------------

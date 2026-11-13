@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.domains import load_domain
 from app.jobs.deps import manager_for
-from app.routes import builder, graph, health, jobs, lifecycle, llm, onboarding, preflight, settings, scores, tracks
+from app.routes import builder, graph, health, jobs, library, lifecycle, llm, onboarding, preflight, settings, scores, tracks
 
 UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
 
@@ -20,6 +20,12 @@ async def lifespan(app: FastAPI):
     ensure_tracks(data_dir())  # pre-tracks data/ -> track rfic-default (snapshot first, scores verified); fresh dir -> seeded registry
     manager = manager_for(app)
     await manager.start()
+    try:
+        from app.library.store import LibraryStore
+
+        LibraryStore(data_dir()).fail_interrupted()  # their ingest jobs were just failed by the manager
+    except Exception:  # noqa: BLE001 - a library problem must never stop the app
+        pass
     task = asyncio.create_task(_grading_loop(app)) if getattr(app.state, "grading_retry", False) else None
     try:
         yield
@@ -74,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(lifecycle.router, prefix="/api")
     app.include_router(scores.router, prefix="/api")
     app.include_router(graph.router, prefix="/api")
+    app.include_router(library.router, prefix="/api")
     app.include_router(tracks.router, prefix="/api")
     app.state.domain = load_domain()
     if app.state.domain and app.state.domain.router:

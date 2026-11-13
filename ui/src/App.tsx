@@ -3,6 +3,7 @@ import { api, type TracksView } from './api/client'
 import { Graph } from './Graph'
 import { Home } from './Home'
 import { JobsTray } from './JobsTray'
+import { Library } from './Library'
 import { NodePage } from './NodePage'
 import { Onboarding } from './Onboarding'
 import { Preflight } from './Preflight'
@@ -10,7 +11,7 @@ import { SettingsPage } from './SettingsPage'
 import { Tracks } from './Tracks'
 import { Fin } from './ui'
 
-type Route = { page: 'home' | 'setup' | 'settings' | 'tracks' | 'graph' } | { page: 'node'; id: number }
+type Route = { page: 'home' | 'setup' | 'settings' | 'tracks' | 'graph' | 'library' } | { page: 'node'; id: number }
 
 const parse = (h: string): Route => {
   const m = /^#\/node\/(\d+)$/.exec(h)
@@ -19,6 +20,7 @@ const parse = (h: string): Route => {
   if (h === '#/settings') return { page: 'settings' }
   if (h === '#/tracks') return { page: 'tracks' }
   if (h === '#/graph') return { page: 'graph' }
+  if (h === '#/library') return { page: 'library' }
   return { page: 'home' }
 }
 
@@ -63,6 +65,7 @@ export default function App() {
           <nav className="ml-4 flex gap-1" aria-label="Main">
             {tab('home', '#/', 'Home')}
             {tab('graph', '#/graph', 'Graph')}
+            {tab('library', '#/library', 'Library')}
             {tab('setup', '#/setup', 'Setup')}
             {tab('tracks', '#/tracks', 'Tracks')}
             {tab('settings', '#/settings', 'Settings')}
@@ -93,6 +96,7 @@ export default function App() {
         {route.page === 'graph' && <Graph track={active?.id ?? ''} />}
         {route.page === 'setup' && <><Onboarding track={active?.name} /><Preflight /></>}
         {route.page === 'tracks' && <Tracks onChange={onTracks} go={go} />}
+        {route.page === 'library' && <Library />}
         {route.page === 'settings' && <SettingsPage />}
       </main>
       <JobsTray />

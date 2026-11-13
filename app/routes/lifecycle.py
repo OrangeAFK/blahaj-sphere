@@ -112,6 +112,7 @@ class TutorReply(BaseModel):
     reply: str
     hint: dict[str, Any] | None = None
     redacted: bool
+    citations: list[dict[str, Any]] = []  # library passages the reply used: {book_id, page, title} (SPEC §10)
     model: str | None = None
 
 

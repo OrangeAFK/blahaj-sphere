@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 ui/node_modules/
 ui/dist/
+pdfs/*
+!pdfs/.gitkeep

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type NodeView, type TutorMessage } from './api/client'
+import { api, type Citation, type NodeView, type TutorMessage } from './api/client'
 import { Badge, Btn, Card, Err, errMsg } from './ui'
 import { Markdown } from './Markdown'
 
@@ -27,7 +27,7 @@ export function Tutor({ node }: { node: NodeView }) {
     setMsgs((m) => [...m, { role: 'user', content: message }])
     try {
       const r = await api.tutorChat(node.id, message)
-      setMsgs((m) => [...m, { role: 'assistant', content: r.reply, hint: r.hint, redacted: r.redacted }])
+      setMsgs((m) => [...m, { role: 'assistant', content: r.reply, hint: r.hint, redacted: r.redacted, citations: r.citations as Citation[] }])
     } catch (e) {
       setErr(errMsg(e))
     } finally {
@@ -60,6 +60,11 @@ export function Tutor({ node }: { node: NodeView }) {
           <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
             <div className={`inline-block max-w-full rounded-lg px-2 py-1 text-left ${m.role === 'user' ? 'bg-sky-700 text-white' : m.kind === 'show_me' ? 'bg-amber-50' : 'bg-sky-50'}`}>
               {m.role === 'user' ? <span className="whitespace-pre-wrap">{m.content}</span> : <Markdown>{m.content}</Markdown>}
+              {m.citations && m.citations.length > 0 && (
+                <p className="mt-1 flex flex-wrap gap-1 text-xs text-sky-800" aria-label="Book citations">
+                  {m.citations.map((c) => <Badge key={`${c.book_id}:${c.page}`}>{c.title ?? c.book_id}, p. {c.page}</Badge>)}
+                </p>
+              )}
             </div>
           </div>
         ))}

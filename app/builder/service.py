@@ -25,6 +25,7 @@ from app.builder.review import ReviewUnavailable, run_review
 from app.datastore.cache import rebuild_db
 from app.datastore.layout import DataLayout
 from app.domains import Domain
+from app.library.service import CITATION, excerpt_for_prompt, retrieve
 from app.llm.types import LLMError
 
 MAX_RETRIES = 2  # §7.1
@@ -97,6 +98,7 @@ class BuildService:
         self.router = router
         self.domain = domain
         self.max_retries = max_retries
+        self._hits: dict[str, list[dict]] = {}
 
     @property
     def builds_dir(self) -> Path:
@@ -176,6 +178,32 @@ class BuildService:
         return jobs.submit("rescope_edit", job_fn, node_id=self.layout.job_label(plan.name)), plan, spec
 
     # --- the build -----------------------------------------------------------------------------------
+    def library_hits(self, plan: BuildPlan) -> list[dict]:
+        """Top-5 library passages for the option (SPEC §10), found once per build so every retry sees the same ones."""
+        if plan.name not in self._hits:
+            o = plan.option
+            subs = " ".join(str(x).replace(".", " ").replace("_", " ") for x in o.get("subskills") or [])
+            self._hits[plan.name] = retrieve(self.layout.root, f"{o.get('title', '')}. {subs}. {o.get('why_now', '')}")
+        return self._hits[plan.name]
+
+    def library_record(self, plan: BuildPlan) -> dict:
+        """Which pages the Builder was shown and which of them the released node text cites as `(book-id, p. N)`."""
+        hits = self.library_hits(plan)
+        shown = {(h["book_id"], h["page"]) for h in hits}
+        cited: set[tuple[str, int]] = set()
+        for p in sorted(plan.node_dir.rglob("*")):
+            rel = p.relative_to(plan.node_dir).parts
+            if not p.is_file() or rel[0] in ("_hidden", ".gate", "proof") or p.suffix.lower() not in (".md", ".yaml", ".yml", ".txt"):
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            cited |= {(m.group(1), int(m.group(2))) for m in re.finditer(CITATION, text)}
+        return {"retrieved": [{"book_id": h["book_id"], "page": h["page"], "score": h["score"]} for h in hits],
+                "cited": [{"book_id": b, "page": pg} for b, pg in sorted(cited & shown)],
+                "unknown_citations": [{"book_id": b, "page": pg} for b, pg in sorted(cited - shown)]}  # fmt: skip
+
     def prompt(self, plan: BuildPlan, gate_errors: list[str] | None, edit: EditSpec | None = None) -> str:
         learner = learner_state(self.layout.root, self.track)
         inp = {
@@ -183,7 +211,8 @@ class BuildService:
             "node": {"id": plan.node_id, "dir": plan.name, "slug": plan.name.split("-", 1)[1], "created": plan.created},
             "interleaving_targets": {"open_misconceptions": plan.ctx.open_misconceptions, "stale_subskills": plan.ctx.stale_subskills},
             "learner": {"goals": learner["goals"], "summary": learner["summary"], "scores": learner["scores"],
-                        "open_misconceptions": learner["open_misconceptions"], "library_chunks": []},
+                        "open_misconceptions": learner["open_misconceptions"],
+                        "library_chunks": excerpt_for_prompt(self.library_hits(plan))},
         }  # fmt: skip
         assert self.domain.builder is not None
         parts = [self.domain.builder.prompt.read_text(encoding="utf-8"), "---", "## Input", "```json", json.dumps(inp, indent=1, ensure_ascii=False), "```"]
@@ -238,7 +267,8 @@ class BuildService:
             att: dict = {"n": n}
             try:
                 out = self.router.complete(TASK, [{"role": "user", "content": self.prompt(plan, errors, edit)}], cwd=str(plan.node_dir),
-                                           tools=hooks.tool_names(), mcp_config=str(mcp), node_id=plan.node_id)  # fmt: skip
+                                           tools=hooks.tool_names(), mcp_config=str(mcp), node_id=plan.node_id,
+                                           library_text=bool(self.library_hits(plan)))  # fmt: skip
                 att.update(backend=out.backend, model=out.model, usage=out.usage, meta=out.meta, result_tail=(out.text or "")[-800:])
             except LLMError as e:
                 att["llm_error"] = str(e)[:1000]
@@ -294,6 +324,7 @@ class BuildService:
         record["sim_runtime_s"] = res.sim_runtime_s
         if res.passed:
             record["gate4_hits"] = self._gate4_hits(plan)
+            record["library"] = self.library_record(plan)
             if edit is not None:
                 self._finish_edit(plan, edit, record)
             self._save(record)

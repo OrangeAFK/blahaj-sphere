@@ -2000,6 +2000,166 @@
         }
       }
     },
+    "/api/library": {
+      "get": {
+        "summary": "Get Library",
+        "operationId": "getLibrary",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/books": {
+      "post": {
+        "summary": "Upload Book",
+        "description": "The PDF is the raw request body (`Content-Type: application/pdf`); `filename` names it. Ingest runs as a `library_ingest` job.",
+        "operationId": "uploadBook",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Title"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Uploaded"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/books/{book_id}": {
+      "delete": {
+        "summary": "Delete Book",
+        "operationId": "deleteBook",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Book Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/search": {
+      "get": {
+        "summary": "Search Library",
+        "description": "Top-k passages for a query (cosine over local embeddings). The same retrieval Builder and the tutor use.",
+        "operationId": "searchLibrary",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "k",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 5,
+              "title": "K"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Hit"
+                  },
+                  "title": "Response Searchlibrary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tracks": {
       "get": {
         "summary": "List Tracks",
@@ -2665,6 +2825,99 @@
         },
         "type": "object",
         "title": "ApproveBody"
+      },
+      "Book": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "ingesting",
+              "ready",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages",
+            "default": 0
+          },
+          "chunks": {
+            "type": "integer",
+            "title": "Chunks",
+            "default": 0
+          },
+          "ocr_pages": {
+            "type": "integer",
+            "title": "Ocr Pages",
+            "default": 0
+          },
+          "empty_pages": {
+            "type": "integer",
+            "title": "Empty Pages",
+            "default": 0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created": {
+            "type": "string",
+            "title": "Created"
+          },
+          "updated": {
+            "type": "string",
+            "title": "Updated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "filename",
+          "size_bytes",
+          "sha256",
+          "status",
+          "created",
+          "updated"
+        ],
+        "title": "Book"
       },
       "BranchOption": {
         "properties": {
@@ -3474,6 +3727,39 @@
         ],
         "title": "HintBody"
       },
+      "Hit": {
+        "properties": {
+          "book_id": {
+            "type": "string",
+            "title": "Book Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "book_id",
+          "title",
+          "page",
+          "text",
+          "score"
+        ],
+        "title": "Hit"
+      },
       "InterleavingTargets": {
         "properties": {
           "open_misconceptions": {
@@ -3745,6 +4031,32 @@
           "jupyter_port"
         ],
         "title": "LearnerStatus"
+      },
+      "LibraryView": {
+        "properties": {
+          "books": {
+            "items": {
+              "$ref": "#/components/schemas/Book"
+            },
+            "type": "array",
+            "title": "Books"
+          },
+          "ocr_available": {
+            "type": "boolean",
+            "title": "Ocr Available"
+          },
+          "allow_library_to_free_models": {
+            "type": "boolean",
+            "title": "Allow Library To Free Models"
+          }
+        },
+        "type": "object",
+        "required": [
+          "books",
+          "ocr_available",
+          "allow_library_to_free_models"
+        ],
+        "title": "LibraryView"
       },
       "NodeSummary": {
         "properties": {
@@ -4690,6 +5002,15 @@
             "type": "boolean",
             "title": "Redacted"
           },
+          "citations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Citations",
+            "default": []
+          },
           "model": {
             "anyOf": [
               {
@@ -4708,6 +5029,23 @@
           "redacted"
         ],
         "title": "TutorReply"
+      },
+      "Uploaded": {
+        "properties": {
+          "book": {
+            "$ref": "#/components/schemas/Book"
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "book",
+          "job_id"
+        ],
+        "title": "Uploaded"
       },
       "UrlResponse": {
         "properties": {

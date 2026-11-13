@@ -15,6 +15,10 @@ export type TracksView = components['schemas']['TracksView']
 export type TrackView = components['schemas']['TrackView']
 export type TrashView = components['schemas']['TrashView']
 
+export type LibraryView = components['schemas']['LibraryView']
+export type Book = components['schemas']['Book']
+export type LibraryHit = components['schemas']['Hit']
+
 export type GraphView = components['schemas']['GraphView']
 export type GraphNode = components['schemas']['GraphNode']
 export type GraphEdge = components['schemas']['GraphEdge']
@@ -31,7 +35,8 @@ export type BuildStarted = components['schemas']['BuildStarted']
 
 // Responses the OpenAPI schema leaves untyped (plain dict endpoints); shapes from app/lifecycle/{service,tutor,debrief}.py.
 export type CheckTest = { name?: string; pass?: boolean; measured?: unknown; unit?: string; spec?: unknown }
-export type TutorMessage = { role: string; content: string; ts?: string; kind?: string; hint?: unknown; redacted?: boolean }
+export type Citation = { book_id: string; page: number; title?: string }
+export type TutorMessage = { role: string; content: string; ts?: string; kind?: string; hint?: unknown; redacted?: boolean; citations?: Citation[] }
 export type TutorHistory = { messages: TutorMessage[]; hints: unknown; show_me_used: string[] }
 export type ProofSubmission = { n: number; ts: string; status: string; verdict: string | null; tests: CheckTest[]; seconds: number | null; detail: string | null }
 export type ProofView = {
@@ -136,6 +141,18 @@ export const api = {
   getDiagnostic: () => req<DiagnosticView>('/onboarding/diagnostic'),
   diagnosticNext: () => post<DiagnosticView>('/onboarding/diagnostic/next'),
   diagnosticAnswer: (answer: string) => post<AnswerResult>('/onboarding/diagnostic/answer', { answer }),
+  library: () => req<LibraryView>('/library'),
+  uploadBook: async (file: File, title?: string) => {
+    const q = new URLSearchParams({ filename: file.name })
+    if (title) q.set('title', title)
+    const r = await fetch(`/api/library/books?${q}`, { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: file })
+    if (!r.ok) throw new Error(await r.json().then((b: { detail?: string }) => b.detail).catch(() => undefined) ?? `${r.status} upload`)
+    return r.json() as Promise<{ book: Book; job_id: string }>
+  },
+  deleteBook: async (id: string) => {
+    const r = await fetch(`/api/library/books/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (!r.ok) throw new Error(await r.json().then((b: { detail?: string }) => b.detail).catch(() => undefined) ?? `${r.status} delete`)
+  },
   graph: () => req<GraphView>('/graph'),
   nodes: () => req<NodeSummary[]>('/nodes'),
   node: (id: number) => req<NodeView>(`/nodes/${id}`),

@@ -973,6 +973,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Library */
+        get: operations["getLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/books": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Book
+         * @description The PDF is the raw request body (`Content-Type: application/pdf`); `filename` names it. Ingest runs as a `library_ingest` job.
+         */
+        post: operations["uploadBook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/books/{book_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Book */
+        delete: operations["deleteBook"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Library
+         * @description Top-k passages for a query (cosine over local embeddings). The same retrieval Builder and the tutor use.
+         */
+        get: operations["searchLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tracks": {
         parameters: {
             query?: never;
@@ -1271,6 +1345,55 @@ export interface components {
         ApproveBody: {
             framework?: components["schemas"]["Framework"] | null;
         };
+        /** Book */
+        Book: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Filename */
+            filename: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Sha256 */
+            sha256: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "ingesting" | "ready" | "failed";
+            /**
+             * Pages
+             * @default 0
+             */
+            pages: number;
+            /**
+             * Chunks
+             * @default 0
+             */
+            chunks: number;
+            /**
+             * Ocr Pages
+             * @default 0
+             */
+            ocr_pages: number;
+            /**
+             * Empty Pages
+             * @default 0
+             */
+            empty_pages: number;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
+            /** Error */
+            error?: string | null;
+            /** Created */
+            created: string;
+            /** Updated */
+            updated: string;
+        };
         /**
          * BranchOption
          * @description SPEC §5.6
@@ -1559,6 +1682,19 @@ export interface components {
             /** Subskill */
             subskill: string;
         };
+        /** Hit */
+        Hit: {
+            /** Book Id */
+            book_id: string;
+            /** Title */
+            title: string;
+            /** Page */
+            page: number;
+            /** Text */
+            text: string;
+            /** Score */
+            score: number;
+        };
         /** InterleavingTargets */
         InterleavingTargets: {
             /** Open Misconceptions */
@@ -1654,6 +1790,15 @@ export interface components {
             gui_port: number;
             /** Jupyter Port */
             jupyter_port: number;
+        };
+        /** LibraryView */
+        LibraryView: {
+            /** Books */
+            books: components["schemas"]["Book"][];
+            /** Ocr Available */
+            ocr_available: boolean;
+            /** Allow Library To Free Models */
+            allow_library_to_free_models: boolean;
         };
         /** NodeSummary */
         NodeSummary: {
@@ -1988,8 +2133,21 @@ export interface components {
             } | null;
             /** Redacted */
             redacted: boolean;
+            /**
+             * Citations
+             * @default []
+             */
+            citations: {
+                [key: string]: unknown;
+            }[];
             /** Model */
             model?: string | null;
+        };
+        /** Uploaded */
+        Uploaded: {
+            book: components["schemas"]["Book"];
+            /** Job Id */
+            job_id: string;
         };
         /** UrlResponse */
         UrlResponse: {
@@ -3669,6 +3827,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GraphView"];
+                };
+            };
+        };
+    };
+    getLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryView"];
+                };
+            };
+        };
+    };
+    uploadBook: {
+        parameters: {
+            query: {
+                filename: string;
+                title?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Uploaded"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleteBook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    searchLibrary: {
+        parameters: {
+            query: {
+                q: string;
+                k?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Hit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -14,6 +14,8 @@ the node id, slug and directory, the `created` timestamp, learner goals/summary/
 **interleaving targets** (open misconceptions and stale subskills). Possibly a gate error list from a
 previous attempt: in that case your earlier files are still on disk; read them and fix only what is needed.
 
+`learner.library_chunks` (may be empty): excerpts from the learner's reference books, each `{book_id, page, text}`. For each one relevant to this node, cite it in node.md (a closing "Further reading" line is fine) as `(<book_id>, p. <page>)`, exactly those two values; skip irrelevant ones. Never cite a page that is not in the list, and never put its text into `_hidden/`.
+
 ## Files to write (all via `write_file`)
 
 ### `node.md`
