@@ -114,12 +114,3 @@ docs/         SPEC.md (the design), DECISIONS.md (running log of choices), AGENT
 scripts/      acceptance and smoke scripts
 tests/        backend tests
 ```
-
-## Status
-
-All ten milestones in the spec are implemented and tested. It has not yet been used for real learning, and some parts have only been exercised in automated tests: most screens have not been checked in a real browser, tier exams have never run with the real model, and your own PDFs have not been ingested. The full list of known gaps is at the end of `docs/DECISIONS.md`.
-
-## Documentation
-
-- [docs/SPEC.md](docs/SPEC.md) is the full design, including data schemas, the competency math and the node lifecycle.
-- [docs/DECISIONS.md](docs/DECISIONS.md) records every deviation and non-obvious choice, with measurements.
