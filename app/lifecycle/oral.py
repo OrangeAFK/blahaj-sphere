@@ -17,6 +17,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from app.competency.engine import EXAM_PASS_MEAN, exam_passed, score_domain
+from app.datastore.events import read_events
 from app.datastore.misconceptions import add_misconception, fold, read_records
 from app.lifecycle.debrief import GRADE_SCHEMA, refresh_provisional, tolerance_abs
 from app.lifecycle.nodes import LifecycleError, NodeRef, NodeStore, autocommit, node_lock
@@ -27,6 +29,8 @@ from app.voice.stt import SAMPLE_RATE, VoiceUnavailable, build_prompt
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 GRADE_TASK = "grade_oral"
+EXAM_GRADE_TASK = "grade_tier_exam"  # SPEC §8.4: the same pinned grader and frozen prompt as an oral, its own routing entry
+GRADE_TASKS = (GRADE_TASK, EXAM_GRADE_TASK)
 EXAMINER_TASK = "oral_dialogue"
 EXAMINER_SCHEMA = {
     "type": "object",
@@ -92,6 +96,12 @@ def oral_verdict(results: list[dict]) -> dict:
     return {"passed": passed, "mean": mean, "core_n": len(core)}
 
 
+def exam_verdict(results: list[dict]) -> dict:
+    """§8.4 tier-exam pass rule over all graded items: mean >= 2.3 and no item scored 0 (the engine's `exam_passed`)."""
+    scores = [r["score"] for r in results]
+    return {"passed": exam_passed(scores), "mean": sum(scores) / len(scores) if scores else None, "core_n": len(scores)}
+
+
 class OralExam:
     def __init__(self, store: NodeStore, router, domain, debrief, voice=None, jobs=None):
         self.store, self.router, self.domain, self.debrief = store, router, domain, debrief
@@ -119,9 +129,19 @@ class OralExam:
         by_id = {it["id"]: it for it in self.store.oral_key(ref)}
         return [by_id[i] for i in st["plan"]["items"] if i in by_id]
 
+    def is_exam(self, ref: NodeRef) -> bool:
+        return self.store.frontmatter(ref).get("kind") == "tier_exam"
+
+    def grade_task(self, ref: NodeRef) -> str:
+        return EXAM_GRADE_TASK if self.is_exam(ref) else GRADE_TASK
+
     # --- plan (§7.6 length) ----------------------------------------------------------------------------------
     def plan(self, ref: NodeRef) -> dict:
         key = self.store.oral_key(ref)
+        if self.is_exam(ref):  # §8.4: every question of the exam key, in key order; no prelab, so no adaptive length
+            subs = sorted({str(it.get("subskill")) for it in key})
+            return {"n_core": len(key), "n_interleaved": 0, "items": [it["id"] for it in key],
+                    "reason": f"tier exam: {len(key)} questions across {len(subs)} subskill(s): " + ", ".join(subs)}  # fmt: skip
         answers = self.debrief._answers(ref)
         missed = []
         for it in self.store.prelab_key(ref):
@@ -397,15 +417,16 @@ class OralExam:
             if g["status"] in ("done", "pending") or st["status"] != "complete":
                 return
             msgs = self._grade_messages(ref, st)
+            task = self.grade_task(ref)
             try:
-                res = self.router.complete(GRADE_TASK, msgs, schema=GRADE_SCHEMA, node_id=ref.id, track=ref.track)
+                res = self.router.complete(task, msgs, schema=GRADE_SCHEMA, node_id=ref.id, track=ref.track)
                 parsed, err = self._parse(ref, st, res.json)
                 if parsed is not None and parsed["unverified"]:  # one repair attempt for quotes that are not verbatim
                     bad = ", ".join(f"{r['id']}: {r['quote'][:80]!r}" for r in parsed["unverified"])
                     fix = [*msgs, {"role": "assistant", "content": res.text},
                            {"role": "user", "content": f"These quotes are not verbatim from the learner's turns ({bad}). Return the same JSON with each quote copied exactly from a learner turn."}]  # fmt: skip
                     try:
-                        res2 = self.router.complete(GRADE_TASK, fix, schema=GRADE_SCHEMA, node_id=ref.id, track=ref.track)
+                        res2 = self.router.complete(task, fix, schema=GRADE_SCHEMA, node_id=ref.id, track=ref.track)
                         p2, e2 = self._parse(ref, st, res2.json)
                         if p2 is not None:
                             res, parsed, err = res2, p2, e2
@@ -418,7 +439,7 @@ class OralExam:
                 return
             if err or parsed is None:  # unusable grader output: queue it like an outage, the retry asks again
                 g["status"], g["error"] = "pending", err or "unusable grader output"
-                self.router.store.enqueue_grade(GRADE_TASK, _req_dict(msgs, ref.id, ref.track), ref.id, g["error"], track=ref.track)
+                self.router.store.enqueue_grade(task, _req_dict(task, msgs, ref.id, ref.track), ref.id, g["error"], track=ref.track)
             else:
                 self._apply(ref, st, parsed, res.json, res.model)
             self._save(ref, st)
@@ -456,6 +477,8 @@ class OralExam:
         """Write the evidence: oral_item events, misconceptions, verdict, and (on a fail) the remediation child."""
         results = parsed["results"]
         ev = self.debrief.ev
+        if self.is_exam(ref):
+            return self._apply_exam(ref, st, results, out, model)
         for r in results:
             ev.emit(ref, "oral_item", r["subskill"], score=r["score"], interleaved=r["interleaved"], grader_model=model)
         logged = ev.log_misconceptions(ref, out.get("misconceptions"), None)
@@ -475,9 +498,35 @@ class OralExam:
         if not verdict["passed"]:
             self.spawn_remediation(ref, st)
 
+    def _apply_exam(self, ref: NodeRef, st: dict, results: list[dict], out: dict, model: str) -> None:
+        """Tier exam (§8.4): one tier_exam_item event per item; the engine derives the tier-up from the six events (pass = mean >= 2.3, no 0).
+        A fail logs misconceptions (the grader's, plus a weak-answer one per subskill scoring < 2) and the unlock condition re-applies."""
+        domain = str(self.store.frontmatter(ref).get("domain"))
+        path = self.store.layout.events_path
+        before = score_domain(read_events(path, ref.track)[0], domain)
+        for r in results:
+            self.debrief.ev.emit(ref, "tier_exam_item", r["subskill"], score=r["score"], grader_model=model)
+        after = score_domain(read_events(path, ref.track)[0], domain)
+        verdict = exam_verdict(results)
+        logged = self.debrief.ev.log_misconceptions(ref, out.get("misconceptions"), None)
+        have = {m["subskill"] for m in out.get("misconceptions") or [] if isinstance(m, dict)}
+        if not verdict["passed"]:
+            for r in results:
+                if r["score"] < 2 and r["subskill"] not in have:
+                    what = "Could not answer" if r["score"] == 0 else "Weak answer on"
+                    text = f"{what} a tier-exam question on {r['subskill']}: {r['rationale']}".strip()
+                    if add_misconception(self.store.layout.misconceptions_path, track=ref.track, node_id=ref.id, subskill=r["subskill"], text=text) is not None:
+                        logged += 1
+                    have.add(r["subskill"])
+        g = st["grading"]
+        g.update(status="done", results=results, model=model, passed=verdict["passed"], mean=verdict["mean"], misconceptions_logged=logged,
+                 exam={"domain": domain, "tier_before": before.tier, "tier_after": after.tier, "tier_up": after.tier > before.tier,
+                       "pass_mean": EXAM_PASS_MEAN, "mastery_after": round(after.mastery, 1)})  # fmt: skip
+        g.pop("error", None)
+
     def apply_queued(self, row: dict, result) -> None:
         """Router.retry_pending_grades handler: a queued oral grading finally succeeded."""
-        if row.get("task_type") != GRADE_TASK or row.get("node_id") is None:
+        if row.get("task_type") not in GRADE_TASKS or row.get("node_id") is None:
             return
         try:
             ref = self.store.find(int(row["node_id"]))
@@ -489,7 +538,7 @@ class OralExam:
                 return  # already applied
             parsed, err = self._parse(ref, st, result.json)
             if err or parsed is None:
-                self.router.store.enqueue_grade(GRADE_TASK, json.loads(row["request"]), ref.id, err or "unusable grader output", track=ref.track)
+                self.router.store.enqueue_grade(row["task_type"], json.loads(row["request"]), ref.id, err or "unusable grader output", track=ref.track)
             else:
                 self._apply(ref, st, parsed, result.json, result.model)
                 self.debrief.write_md(ref)
@@ -506,6 +555,8 @@ class OralExam:
             rem = st.get("remediation")
             if rem and rem.get("status") in ("building", "ready"):
                 return rem
+            if self.is_exam(ref):
+                raise LifecycleError(409, "a tier exam has no remediation node: its misconceptions are logged and the unlock condition re-applies (§8.4)")
             if st["grading"]["status"] != "done" or st["grading"]["passed"]:
                 raise LifecycleError(409, "remediation only follows a failed, graded oral exam")
             st["remediation"] = self.remediator.spawn(ref, "oral", self._remediation_ctx(ref, st), self._state, self._save)
@@ -549,7 +600,7 @@ class OralExam:
             "status": status, "mode": st["mode"], "passed": g.get("passed"), "mean": g.get("mean"), "model": g.get("model"),
             "items": [{k: r[k] for k in ("id", "subskill", "interleaved", "question", "score", "quote", "rationale")} for r in g.get("results", [])],
             "pending_items": [{"id": i["id"]} for i in self._items(ref, st)] if status == "pending" else [],
-            "remediation": st.get("remediation"),
+            "remediation": st.get("remediation"), "exam": g.get("exam"),
             "latency": {"turns": len(lat), "median_total_s": sorted(x["total_s"] for x in lat)[len(lat) // 2] if lat else None},
             "note": "Oral exam graded." if status == "graded" else "Oral grades pending: they will appear when grading succeeds." if status == "pending" else "",
         }  # fmt: skip
@@ -560,7 +611,7 @@ class OralExam:
         return "done-with-remediation" if (st.get("remediation") or {}).get("status") in ("building", "ready", "needed", "failed") else None
 
 
-def _req_dict(messages: list[dict], node_id: int, track: str) -> dict:
+def _req_dict(task: str, messages: list[dict], node_id: int, track: str) -> dict:
     from dataclasses import asdict
 
-    return asdict(Request(GRADE_TASK, messages, GRADE_SCHEMA, None, None, node_id, None, light=False, track=track))
+    return asdict(Request(task, messages, GRADE_SCHEMA, None, None, node_id, None, light=False, track=track))

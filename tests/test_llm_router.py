@@ -52,7 +52,7 @@ def test_shipped_routing_yaml_is_valid_and_complete():
         "grade_diagnostic", "grade_tier_exam", "interview", "tutor_chat", "oral_dialogue",
         "diagnostic_dialogue", "summarize",
     }
-    assert set(cfg.tasks) == spec_tasks | {"show_me", "review_build"}  # tasks with no §3 name (DECISIONS M5, M5.1)
+    assert set(cfg.tasks) == spec_tasks | {"show_me", "review_build", "build_exam"}  # tasks with no §3 name (DECISIONS M5, M5.1, M10)
     assert [(e.backend, e.model) for e in cfg.tasks["plan_branches"].chain] == [("claude_code", "claude-sonnet-5-5"), ("cursor_cli", "")]
     rv = cfg.tasks["review_build"]
     assert [(e.backend, e.model) for e in rv.chain] == [("claude_code", "claude-sonnet-5-5")] and not rv.grading and not rv.light

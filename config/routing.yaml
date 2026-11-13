@@ -78,6 +78,7 @@ tasks:
   grade_prelab_explain: *grading
   grade_diagnostic: *grading
   grade_tier_exam: *grading
+  build_exam: *heavy       # SPEC 8.4: writes the 6-question exam key (DECISIONS M10)
   interview: *light
   tutor_chat: *tutor
   oral_dialogue: *oral

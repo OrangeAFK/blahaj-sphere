@@ -55,6 +55,7 @@ function NodeDetail({ node }: { node: GraphNode | undefined }) {
         {row('Parents', node.parents.length ? node.parents.map((p) => `#${p}`).join(', ') : 'none')}
         {row('Folder', node.dir)}
       </dl>
+      <a href={`#/node/${node.id}/view`} className="mt-2 inline-block text-sm text-sky-800 underline">Open read-only node view</a>
     </Card>
   )
 }

@@ -80,7 +80,7 @@ def classify(node_id: int, kind: str, status: str, proof: dict, oral: dict, too_
         return out(FAILURE, "proof_failed")
     if _live(oral.get("remediation")):
         return out(FAILURE, "oral_failed")
-    proof_passed = any(s.get("verdict") == "pass" for s in proof.get("submissions") or [])
+    proof_passed = kind == "tier_exam" or any(s.get("verdict") == "pass" for s in proof.get("submissions") or [])  # an exam has no proof stage (§8.4)
     if oral_graded and grading.get("passed") is True and proof_passed:
         return out(SUCCESS)
     return out(PENDING)

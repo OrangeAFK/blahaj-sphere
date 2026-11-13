@@ -23,7 +23,7 @@ from app.builder.service import BuildError, BuildService
 from app.datastore.cache import rebuild_db
 from app.domains import Domain
 from app.lifecycle.debrief import Debrief
-from app.lifecycle.oral import OralExam
+from app.lifecycle.oral import GRADE_TASKS, OralExam
 from app.lifecycle.summary import Summarizer
 from app.lifecycle.nodes import NEXT_ACTION, RESCOPABLE, WORKING, LifecycleError, NodeRef, NodeStore, append_jsonl, autocommit, node_lock
 from app.lifecycle.tutor import Tutor, public_checker
@@ -436,7 +436,7 @@ class Lifecycle:
     def retry_grades(self, force: bool = False) -> int:
         """Retry due pending grades (on app start, periodically, or `force` ignoring the backoff). -> number applied."""
         def apply(row, result):
-            (self.oral if row.get("task_type") == "grade_oral" else self.debrief).apply_queued(row, result)
+            (self.oral if row.get("task_type") in GRADE_TASKS else self.debrief).apply_queued(row, result)
             try:
                 ref = self.store.find(int(row["node_id"]))
                 if self.store.status(ref) == "done":  # the entry was written with "grades pending": refresh it

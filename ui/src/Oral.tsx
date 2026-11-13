@@ -3,7 +3,8 @@ import { api, type OralLatency, type OralTurn, type OralTurnResult, type OralVie
 import { Badge, Btn, Card, Err, errMsg } from './ui'
 
 /** Hold Space (or the button) to talk; the backend records the microphone. Typing is always available as the text fallback. */
-export function Oral({ node, onDone }: { node: { id: number }; onDone: () => void }) {
+export function Oral({ node, onDone }: { node: { id: number; kind?: string | null }; onDone: () => void }) {
+  const exam = node.kind === 'tier_exam'
   const [view, setView] = useState<OralView | null>(null)
   const [err, setErr] = useState('')
   const [mode, setMode] = useState<'voice' | 'text'>('text')
@@ -126,7 +127,9 @@ export function Oral({ node, onDone }: { node: { id: number }; onDone: () => voi
     const voiceOk = v.stt && v.microphone
     return (
       <Card title="Oral" right={<Badge tone="sky">voice or text</Badge>}>
-        <p className="text-sm">Proof passed. A short oral exam checks that you understand why your design works. It is graded the same way in either mode.</p>
+        <p className="text-sm">{exam
+          ? 'Tier exam: six oral questions across the subskills of this domain. Pass with a mean of at least 2.3 and no question scored 0 to move up a tier. It is graded the same way in either mode.'
+          : 'Proof passed. A short oral exam checks that you understand why your design works. It is graded the same way in either mode.'}</p>
         <fieldset className="mt-2 space-y-1 text-sm">
           <legend className="text-xs uppercase text-gray-500">Mode</legend>
           <label className="flex items-center gap-2">

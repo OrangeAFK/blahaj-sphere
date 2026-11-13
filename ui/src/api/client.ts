@@ -19,6 +19,10 @@ export type LibraryView = components['schemas']['LibraryView']
 export type Book = components['schemas']['Book']
 export type LibraryHit = components['schemas']['Hit']
 
+export type CompetencyView = components['schemas']['CompetencyView']
+export type DomainCompetency = components['schemas']['DomainCompetency']
+export type ExamStarted = components['schemas']['ExamStarted']
+
 export type GraphView = components['schemas']['GraphView']
 export type GraphNode = components['schemas']['GraphNode']
 export type GraphEdge = components['schemas']['GraphEdge']
@@ -56,6 +60,7 @@ export type OralDebrief = {
   status: string; note: string; mode?: string; passed?: boolean | null; mean?: number | null; model?: string | null
   items?: { id: string; subskill: string; interleaved: boolean; question: string; score: number; quote: string; rationale: string }[]
   remediation?: { status: string; node_dir?: string; title?: string; error?: string } | null
+  exam?: { domain: string; tier_before: number; tier_after: number; tier_up: boolean; pass_mean: number; mastery_after: number } | null
   latency?: { turns: number; median_total_s: number | null }
 }
 export type MasteryDelta = { domain: string; tier: number; mastery_before: number; mastery_after: number; delta: number; exam_unlocked: boolean }
@@ -64,7 +69,7 @@ export type Calibration = {
   error: number; rel_error: number | null; tolerance: number; within: boolean
 }
 export type DebriefView = {
-  node_id: number; title: string | null; status: string; provisional: boolean
+  node_id: number; title: string | null; kind?: string | null; status: string; provisional: boolean
   proof: { passed: boolean; submissions: number; failed_submissions: number }
   calibration: { numeric: Calibration[]; within: number; total: number }
   grades: {
@@ -154,6 +159,8 @@ export const api = {
     if (!r.ok) throw new Error(await r.json().then((b: { detail?: string }) => b.detail).catch(() => undefined) ?? `${r.status} delete`)
   },
   graph: () => req<GraphView>('/graph'),
+  competency: () => req<CompetencyView>('/competency'),
+  startTierExam: (domain: string) => post<ExamStarted>(`/competency/${encodeURIComponent(domain)}/exam`),
   nodes: () => req<NodeSummary[]>('/nodes'),
   node: (id: number) => req<NodeView>(`/nodes/${id}`),
   submitPrelab: (id: number, answers: Record<string, string | number>) => post<NodeView>(`/nodes/${id}/prelab/submit`, { answers }),

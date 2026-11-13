@@ -22,6 +22,7 @@ PACKS = {
     "examiner": ["say", "item_id", "kind"],
     "oral_grader": ["items", "score", "quote", "rationale", "misconceptions"],  # §5.7
     "prelab_explain_grader": ["items", "score", "quote", "rationale", "misconceptions"],  # §5.7
+    "exam_writer": ["title", "brief", "items", "anchors", "probes", "key_terms"],  # tier exam key (M10)
     "summarizer": ["## <id> <title>"],  # Markdown entry, no JSON
     "fidelity_reviewer": ["checks", "method_fidelity", "metrics_simulated", "no_answers_in_starter", "pass", "file", "quote", "reason"],
 }

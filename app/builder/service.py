@@ -33,7 +33,7 @@ MAX_RETRIES = 2  # §7.1
 LEARNER_FILES = ("prelab_answers.yaml", "proof", "oral.md", "debrief.md")
 TASK = "build_challenge"
 _ID_DIR = re.compile(r"^(\d{4,})-")
-_alloc_lock = threading.Lock()
+alloc_lock = _alloc_lock = threading.Lock()
 
 
 class BuildError(Exception):
@@ -89,6 +89,16 @@ def prelab_fingerprint(node_dir: Path) -> str:
     return h.hexdigest()
 
 
+def next_node_id(layout: DataLayout) -> int:
+    """Max id over node dirs and build dirs (failed builds keep their id, so llm_calls never mix two nodes) + 1. Call under `alloc_lock`
+    and create the node dir before releasing it (tier exams allocate ids too, app/lifecycle/exam.py)."""
+    ids = [0]
+    for parent in (layout.nodes_dir, layout.builds_dir, layout.builds_dir / "failed"):
+        if parent.is_dir():
+            ids += [int(m.group(1)) for p in parent.iterdir() if (m := _ID_DIR.match(p.name))]
+    return max(ids) + 1
+
+
 class BuildService:
     def __init__(self, data_root: Path, track: str, router, domain: Domain, max_retries: int = MAX_RETRIES):
         if domain.builder is None or domain.run_checker is None:
@@ -109,12 +119,7 @@ class BuildService:
 
     # --- allocation --------------------------------------------------------------------------------
     def _next_id(self) -> int:
-        """Max id over node dirs and build dirs (failed builds keep their id, so llm_calls never mix two nodes) + 1."""
-        ids = [0]
-        for parent in (self.layout.nodes_dir, self.builds_dir, self.builds_dir / "failed"):
-            if parent.is_dir():
-                ids += [int(m.group(1)) for p in parent.iterdir() if (m := _ID_DIR.match(p.name))]
-        return max(ids) + 1
+        return next_node_id(self.layout)
 
     def prepare(self, option: dict) -> BuildPlan:
         """Allocate the node id + directory and compute the gate-4 targets. Thread-safe."""

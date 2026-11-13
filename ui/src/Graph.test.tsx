@@ -91,6 +91,7 @@ test('clicking a node opens a read-only detail panel for it; clicking the pane c
   expect(screen.getByText('provisional')).toBeInTheDocument()
   // read-only: the panel offers no action
   expect(panel.closest('section')!.querySelector('button')).toBeNull()
+  expect(screen.getByText('Open read-only node view')).toHaveAttribute('href', '#/node/2/view')
 
   fireEvent.click(container.querySelector('.react-flow__pane')!)
   await waitFor(() => expect(screen.getByText('Click a node to see its details.')).toBeInTheDocument())

@@ -51,6 +51,12 @@ export function Home({ open }: { open: (id: number) => void }) {
   const build = async (i: number) => {
     setErr('')
     try {
+      const o = opts?.options[i]
+      if (o?.kind === 'tier_exam') {  // an exam is written, not built: it opens straight at its oral
+        const x = await api.startTierExam(o.domain)
+        open(x.node_id)
+        return
+      }
       const b = await api.startBuild(i)
       setOpts(null)
       setErr(`Building node ${b.node_id} (${b.node_dir}). Progress is in the job tray; you can keep using the app.`)
@@ -92,7 +98,7 @@ export function Home({ open }: { open: (id: number) => void }) {
                   <Badge tone="gray">~{o.size_est_min} min</Badge>
                 </div>
                 <p className="text-gray-600">{o.why_now}</p>
-                <Btn className="mt-1" onClick={() => build(i)}>Build this</Btn>
+                <Btn className="mt-1" onClick={() => build(i)}>{o.kind === 'tier_exam' ? 'Start the exam' : 'Build this'}</Btn>
               </li>
             ))}
           </ul>

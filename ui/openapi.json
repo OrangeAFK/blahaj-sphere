@@ -1981,6 +1981,65 @@
         }
       }
     },
+    "/api/competency": {
+      "get": {
+        "summary": "Get Competency",
+        "description": "Domains x tiers of the ACTIVE track: descriptors, mastery, the unlock condition, subskills and the tier-exam state.",
+        "operationId": "getCompetency",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompetencyView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/competency/{domain}/exam": {
+      "post": {
+        "summary": "Start Exam",
+        "description": "Create the tier-exam node of an unlocked domain (heavy call writes its 6 questions); an exam already in progress is returned instead.",
+        "operationId": "startTierExam",
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Domain"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamStarted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/graph": {
       "get": {
         "summary": "Get Graph",
@@ -3144,6 +3203,27 @@
         ],
         "title": "CheckerView"
       },
+      "CompetencyView": {
+        "properties": {
+          "track": {
+            "type": "string",
+            "title": "Track"
+          },
+          "domains": {
+            "items": {
+              "$ref": "#/components/schemas/DomainCompetency"
+            },
+            "type": "array",
+            "title": "Domains"
+          }
+        },
+        "type": "object",
+        "required": [
+          "track",
+          "domains"
+        ],
+        "title": "CompetencyView"
+      },
       "ContainerStatus": {
         "properties": {
           "image": {
@@ -3328,6 +3408,68 @@
         ],
         "title": "DiagnosticView"
       },
+      "DomainCompetency": {
+        "properties": {
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "mastery": {
+            "type": "number",
+            "title": "Mastery"
+          },
+          "n_window": {
+            "type": "integer",
+            "title": "N Window"
+          },
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/TierDescriptor"
+            },
+            "type": "array",
+            "title": "Tiers"
+          },
+          "unlock": {
+            "$ref": "#/components/schemas/UnlockView"
+          },
+          "subskills": {
+            "items": {
+              "$ref": "#/components/schemas/SubskillView"
+            },
+            "type": "array",
+            "title": "Subskills"
+          },
+          "exam": {
+            "$ref": "#/components/schemas/ExamView"
+          }
+        },
+        "type": "object",
+        "required": [
+          "domain",
+          "name",
+          "scope",
+          "tier",
+          "mastery",
+          "n_window",
+          "tiers",
+          "unlock",
+          "subskills",
+          "exam"
+        ],
+        "title": "DomainCompetency"
+      },
       "DomainScoreView": {
         "properties": {
           "domain": {
@@ -3373,6 +3515,148 @@
           "subskills_evidenced"
         ],
         "title": "DomainScoreView"
+      },
+      "ExamAttempt": {
+        "properties": {
+          "node_id": {
+            "type": "integer",
+            "title": "Node Id"
+          },
+          "dir": {
+            "type": "string",
+            "title": "Dir"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "tier_up": {
+            "type": "boolean",
+            "title": "Tier Up"
+          }
+        },
+        "type": "object",
+        "required": [
+          "node_id",
+          "dir",
+          "status",
+          "tier_up"
+        ],
+        "title": "ExamAttempt"
+      },
+      "ExamStarted": {
+        "properties": {
+          "node_id": {
+            "type": "integer",
+            "title": "Node Id"
+          },
+          "dir": {
+            "type": "string",
+            "title": "Dir"
+          },
+          "reused": {
+            "type": "boolean",
+            "title": "Reused"
+          }
+        },
+        "type": "object",
+        "required": [
+          "node_id",
+          "dir",
+          "reused"
+        ],
+        "title": "ExamStarted"
+      },
+      "ExamView": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
+          "pass_mean": {
+            "type": "number",
+            "title": "Pass Mean"
+          },
+          "questions": {
+            "type": "integer",
+            "title": "Questions"
+          },
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/ExamAttempt"
+            },
+            "type": "array",
+            "title": "Attempts"
+          },
+          "tier_ups": {
+            "items": {
+              "$ref": "#/components/schemas/TierUp"
+            },
+            "type": "array",
+            "title": "Tier Ups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "missing",
+          "pass_mean",
+          "questions",
+          "attempts",
+          "tier_ups"
+        ],
+        "title": "ExamView"
       },
       "Framework": {
         "properties": {
@@ -4762,6 +5046,24 @@
         ],
         "title": "ShowMeReply"
       },
+      "SubskillView": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "evidenced": {
+            "type": "boolean",
+            "title": "Evidenced"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "evidenced"
+        ],
+        "title": "SubskillView"
+      },
       "SummaryView": {
         "properties": {
           "text": {
@@ -4784,6 +5086,47 @@
           "cap"
         ],
         "title": "SummaryView"
+      },
+      "TierDescriptor": {
+        "properties": {
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "descriptor": {
+            "type": "string",
+            "title": "Descriptor"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tier",
+          "descriptor",
+          "state"
+        ],
+        "title": "TierDescriptor"
+      },
+      "TierUp": {
+        "properties": {
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "via": {
+            "type": "string",
+            "title": "Via"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tier",
+          "via"
+        ],
+        "title": "TierUp"
       },
       "TrackView": {
         "properties": {
@@ -5029,6 +5372,39 @@
           "redacted"
         ],
         "title": "TutorReply"
+      },
+      "UnlockView": {
+        "properties": {
+          "mastery_needed": {
+            "type": "number",
+            "title": "Mastery Needed"
+          },
+          "subskills_needed": {
+            "type": "integer",
+            "title": "Subskills Needed"
+          },
+          "subskills_evidenced": {
+            "type": "integer",
+            "title": "Subskills Evidenced"
+          },
+          "mastery_ok": {
+            "type": "boolean",
+            "title": "Mastery Ok"
+          },
+          "subskills_ok": {
+            "type": "boolean",
+            "title": "Subskills Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mastery_needed",
+          "subskills_needed",
+          "subskills_evidenced",
+          "mastery_ok",
+          "subskills_ok"
+        ],
+        "title": "UnlockView"
       },
       "Uploaded": {
         "properties": {

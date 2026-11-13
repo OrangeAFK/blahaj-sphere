@@ -6,13 +6,15 @@ import { Oral } from './Oral'
 import { Markdown } from './Markdown'
 
 const STAGES = ['prelab', 'lab', 'proof', 'oral', 'debrief', 'done'] as const
+const EXAM_STAGES = ['oral', 'debrief', 'done'] as const  // a tier exam is only its oral (SPEC 8.4)
 const WORKING = ['lab', 'proof']
 
-export function Stepper({ status }: { status: string }) {
-  const at = STAGES.indexOf(status as (typeof STAGES)[number])
+export function Stepper({ status, kind }: { status: string; kind?: string | null }) {
+  const stages: readonly string[] = kind === 'tier_exam' ? EXAM_STAGES : STAGES
+  const at = stages.indexOf(status)
   return (
     <ol aria-label="Stage" className="flex flex-wrap gap-1 text-xs">
-      {STAGES.map((s, i) => (
+      {stages.map((s, i) => (
         <li key={s} aria-current={s === status ? 'step' : undefined}
             className={`rounded-full px-2.5 py-0.5 ${s === status ? 'bg-sky-700 font-semibold text-white' : i < at ? 'bg-sky-100 text-sky-800' : 'bg-gray-100 text-gray-500'}`}>
           {i < at ? '✓ ' : ''}{s}
@@ -23,7 +25,7 @@ export function Stepper({ status }: { status: string }) {
   )
 }
 
-export function NodePage({ id, home }: { id: number; home: () => void }) {
+export function NodePage({ id, home, readOnly = false }: { id: number; home: () => void; readOnly?: boolean }) {
   const [node, setNode] = useState<NodeView | null>(null)
   const [err, setErr] = useState('')
   const [rescoping, setRescoping] = useState(false)
@@ -40,7 +42,8 @@ export function NodePage({ id, home }: { id: number; home: () => void }) {
   useEffect(() => { void load() }, [load])
 
   if (!node) return <div><Err e={err} />{!err && <p className="text-sm text-gray-500">Loading…</p>}</div>
-  const working = WORKING.includes(node.status)
+  const working = WORKING.includes(node.status) && !readOnly
+  const isExam = node.kind === 'tier_exam'
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -50,17 +53,21 @@ export function NodePage({ id, home }: { id: number; home: () => void }) {
         <Badge tone="gray">{node.domain} T{node.tier}</Badge>
         {node.size_est_min && <Badge tone="gray">~{node.size_est_min} min</Badge>}
         <span className="ml-auto" />
-        {node.rescopable && <Btn danger onClick={() => setRescoping(true)}>Rescope…</Btn>}
+        {readOnly && <Badge tone="gray">read-only view</Badge>}
+        {readOnly && <Btn onClick={() => { window.location.hash = `#/node/${node.id}` }}>Open the working page</Btn>}
+        {isExam && <Badge tone="amber">tier exam</Badge>}
+        {node.rescopable && !readOnly && <Btn danger onClick={() => setRescoping(true)}>Rescope…</Btn>}
       </div>
-      <Stepper status={node.status} />
+      <Stepper status={node.status} kind={node.kind} />
       {busyMsg && <p className="rounded bg-amber-50 p-2 text-sm text-amber-800">{busyMsg}</p>}
       <div className={working ? 'grid gap-3 lg:grid-cols-[3fr_2fr]' : ''}>
         <div className="space-y-3">
           <Card title="Brief"><details open={node.status === 'prelab'}><summary className="cursor-pointer text-sm text-sky-800">Show / hide brief</summary><div className="mt-2"><Markdown>{node.brief}</Markdown></div></details></Card>
-          {node.status === 'prelab' && <Prelab node={node} onDone={load} />}
+          {readOnly && !['debrief', 'done'].includes(node.status) && <Card><p className="text-sm text-gray-600">This node is at the {node.status} stage; its work happens on the working page.</p></Card>}
+          {!readOnly && node.status === 'prelab' && <Prelab node={node} onDone={load} />}
           {working && <Lab node={node} reload={load} />}
-          {node.status === 'oral' && <Oral node={node} onDone={load} />}
-          {(node.status === 'debrief' || node.status === 'done') && <Debrief node={node} onDone={load} home={home} />}
+          {!readOnly && node.status === 'oral' && <Oral node={node} onDone={load} />}
+          {(node.status === 'done' || (node.status === 'debrief' && !readOnly)) && <Debrief node={node} onDone={load} home={home} readOnly={readOnly} />}
           {!STAGES.includes(node.status as (typeof STAGES)[number]) && <Card><p className="text-sm">This node is {node.status}.</p></Card>}
           <Err e={err} />
         </div>
@@ -274,7 +281,7 @@ function Lab({ node, reload }: { node: NodeView; reload: () => void }) {
   )
 }
 
-function OralResult({ node, oral, reload, setErr }: { node: NodeView; oral: OralDebrief; reload: () => void; setErr: (s: string) => void }) {
+function OralResult({ node, oral, reload, setErr, exam = false, readOnly = false }: { node: NodeView; oral: OralDebrief; reload: () => void; setErr: (s: string) => void; exam?: boolean; readOnly?: boolean }) {
   const rem = oral.remediation
   return (
     <div data-testid="oral-result">
@@ -285,7 +292,9 @@ function OralResult({ node, oral, reload, setErr }: { node: NodeView; oral: Oral
       </h3>
       {oral.status === 'graded' && (
         <p className="text-xs text-gray-500">
-          Mean {oral.mean != null ? oral.mean.toFixed(2) : 'n/a'} over the non-interleaved questions (pass: mean ≥ 2.0 and no 0). Interleaved questions count toward mastery but never fail the node.
+          {exam
+            ? <>Mean {oral.mean != null ? oral.mean.toFixed(2) : 'n/a'} over all six questions (pass: mean ≥ 2.3 and no 0).</>
+            : <>Mean {oral.mean != null ? oral.mean.toFixed(2) : 'n/a'} over the non-interleaved questions (pass: mean ≥ 2.0 and no 0). Interleaved questions count toward mastery but never fail the node.</>}
         </p>
       )}
       {oral.status === 'pending' && <p className="text-sm text-amber-700">{oral.note}</p>}
@@ -306,7 +315,7 @@ function OralResult({ node, oral, reload, setErr }: { node: NodeView; oral: Oral
           {rem.status === 'ready' && <>follow-up node {rem.node_dir} is ready; find it on Home.</>}
           {rem.status === 'needed' && <>a follow-up node is needed (it starts when the job worker is running).</>}
           {rem.status === 'failed' && <>could not start the follow-up node: {rem.error}</>}
-          {(rem.status === 'failed' || rem.status === 'needed') && (
+          {!readOnly && (rem.status === 'failed' || rem.status === 'needed') && (
             <Btn className="ml-2" onClick={() => api.retryRemediation(node.id).then(reload).catch((e) => setErr(errMsg(e)))}>Retry</Btn>
           )}
         </div>
@@ -315,15 +324,17 @@ function OralResult({ node, oral, reload, setErr }: { node: NodeView; oral: Oral
   )
 }
 
-function Debrief({ node, onDone, home }: { node: NodeView; onDone: () => void; home: () => void }) {
+function Debrief({ node, onDone, home, readOnly = false }: { node: NodeView; onDone: () => void; home: () => void; readOnly?: boolean }) {
   const [d, setD] = useState<DebriefView | null>(null)
   const [err, setErr] = useState('')
   const load = useCallback(() => api.debrief(node.id).then(setD).catch((e) => setErr(errMsg(e))), [node.id])
   useEffect(() => {
     void load()
+    if (readOnly) return undefined
     const t = setInterval(load, 5000) // pending grades arrive from the retry queue while this is open
     return () => clearInterval(t)
-  }, [load])
+  }, [load, readOnly])
+  const exam = d?.kind === 'tier_exam'
   if (!d) return <Card title="Debrief"><Err e={err} /></Card>
   const finish = async () => {
     try {
@@ -335,14 +346,21 @@ function Debrief({ node, onDone, home }: { node: NodeView; onDone: () => void; h
   }
   return (
     <Card title="Debrief" right={d.grades.status === 'pending' ? <Badge tone="amber">grades pending</Badge> : <Badge tone="green">graded</Badge>}>
-      <p className="text-sm">Proof: {d.proof.passed ? 'passed' : 'not passed'} after {d.proof.submissions} submission(s).</p>
-      {d.checker && (
+      {exam && d.oral.exam && (
+        <p data-testid="exam-result" className={`rounded p-2 text-sm font-semibold ${d.oral.exam.tier_up ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-900'}`}>
+          {d.oral.exam.tier_up
+            ? `Tier up! ${d.oral.exam.domain} moves from T${d.oral.exam.tier_before} to T${d.oral.exam.tier_after}; mastery starts fresh.`
+            : `Not this time: ${d.oral.exam.domain} stays at T${d.oral.exam.tier_before}. The misconceptions are logged; the exam unlocks again once the unlock condition holds.`}
+        </p>
+      )}
+      {!exam && <p className="text-sm">Proof: {d.proof.passed ? 'passed' : 'not passed'} after {d.proof.submissions} submission(s).</p>}
+      {!exam && d.checker && (
         <div data-testid="debrief-checker">
           <h3 className="mt-3 text-sm font-semibold">Final checker result</h3>
           <CheckResult c={d.checker} />
         </div>
       )}
-      <h3 className="mt-3 text-sm font-semibold">Prediction vs actual ({d.calibration.within}/{d.calibration.total} within tolerance)</h3>
+      {!exam && <><h3 className="mt-3 text-sm font-semibold">Prediction vs actual ({d.calibration.within}/{d.calibration.total} within tolerance)</h3>
       <table className="w-full text-left text-sm">
         <thead className="text-xs uppercase text-gray-500"><tr><th>Item</th><th>Predicted</th><th>Actual</th><th>Error</th><th /></tr></thead>
         <tbody>
@@ -357,7 +375,8 @@ function Debrief({ node, onDone, home }: { node: NodeView; onDone: () => void; h
           ))}
         </tbody>
       </table>
-      <h3 className="mt-3 text-sm font-semibold">Written explanations</h3>
+      </>}
+      {!exam && <><h3 className="mt-3 text-sm font-semibold">Written explanations</h3>
       {d.grades.status === 'pending' && (
         <ul className="text-sm">
           {d.grades.pending_items.map((i) => <li key={i.id}>{i.id}: <Badge tone="amber">pending</Badge> <span className="text-gray-500">{i.subskill}</span></li>)}
@@ -372,6 +391,7 @@ function Debrief({ node, onDone, home }: { node: NodeView; onDone: () => void; h
           <Markdown>{g.rationale}</Markdown>
         </div>
       ))}
+      </>}
       <h3 className="mt-3 text-sm font-semibold">Misconceptions</h3>
       <ul className="text-sm">
         {d.misconceptions.logged.map((m) => <li key={m.id}>logged: {m.text} <span className="text-xs text-gray-500">{m.subskill}</span></li>)}
@@ -389,8 +409,8 @@ function Debrief({ node, onDone, home }: { node: NodeView; onDone: () => void; h
         ))}
         {d.grades.status === 'pending' && <li className="text-xs text-amber-700">Provisional: deltas will change when grades land.</li>}
       </ul>
-      <OralResult node={node} oral={d.oral} reload={load} setErr={setErr} />
-      {d.status === 'debrief' ? (
+      <OralResult node={node} oral={d.oral} reload={load} setErr={setErr} exam={exam} readOnly={readOnly} />
+      {readOnly ? null : d.status === 'debrief' ? (
         <Btn primary className="mt-3" onClick={finish}>Finish debrief</Btn>
       ) : (
         <Btn primary className="mt-3" onClick={home}>Plan the next node</Btn>

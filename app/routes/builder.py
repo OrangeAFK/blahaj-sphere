@@ -115,7 +115,10 @@ def start_build(body: BuildBody, request: Request, m: Annotated[JobManager, Depe
         raise HTTPException(409, "generate planner options first")
     if not 0 <= body.option_index < len(opts["options"]):
         raise HTTPException(422, f"option_index must be 0..{len(opts['options']) - 1}")
-    job, plan = _builder(request).start(m, opts["options"][body.option_index])
+    option = opts["options"][body.option_index]
+    if option.get("kind") == "tier_exam":  # offered by code (§8.4); an exam is not built, it is written and starts at its oral
+        raise HTTPException(422, f"option {body.option_index} is a tier exam: start it with POST /api/competency/{option['domain']}/exam")
+    job, plan = _builder(request).start(m, option)
     return {"job_id": job.id, "node_id": plan.node_id, "node_dir": plan.name,
             "interleaving_targets": {"open_misconceptions": plan.ctx.open_misconceptions, "stale_subskills": plan.ctx.stale_subskills}}  # fmt: skip
 

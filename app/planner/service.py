@@ -13,13 +13,15 @@ from pathlib import Path
 
 from app.builder.context import learner_state, load_framework
 from app.datastore.layout import DataLayout
+from app.lifecycle.exam import TierExams
+from app.lifecycle.nodes import NodeStore
 from app.lifecycle.outcomes import read_outcomes
 from app.planner.difficulty import FAMILIAR_NODES, FOUNDATIONAL_MAX_MIN, Difficulty, check_options, difficulty_from, unfamiliar_subskills
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 MIN_OPTIONS, MAX_OPTIONS = 2, 4
 SIZE_MIN, SIZE_MAX = 15, 180  # §7.7 sizing: 15-45 min foundational, 1-3 h integrative
-KINDS = ("challenge",)  # tier exams M10; remediation children come from Planner.remediation_option (M7)
+KINDS = ("challenge",)  # remediation children come from Planner.remediation_option (M7); tier exams are offered by code (TierExams.offers, M10)
 REMEDIATION_KINDS = ("remediation",)
 
 OPTIONS_SCHEMA = {
@@ -124,6 +126,7 @@ class Planner:
         outcomes = read_outcomes(self.root, self.track)
         diff = difficulty_from(outcomes)
         unfamiliar = unfamiliar_subskills(self.root, self.track)
+        exams = TierExams(NodeStore(self.root, self.track), self.router, self.domain_pack).offers()
         recent = [{**n, "outcome": outcomes[n["id"]].label if n["id"] in outcomes else n["status"]} for n in state["recent_nodes"]]
         inp = {
             "goals": state["goals"],
@@ -133,6 +136,7 @@ class Planner:
             "open_misconceptions": state["open_misconceptions"],
             "recent_nodes": recent,
             "difficulty": diff.to_input(challenge_nodes=sum(1 for o in outcomes.values() if o.kind == "challenge")),
+            "tier_exams_unlocked": [{"domain": o["domain"], "tier": o["tier"]} for o in exams],  # offered by code after your options; never emit them
             "sizing": {
                 "rule": f"foundational 15-{FOUNDATIONAL_MAX_MIN} min; integrative 60-180 min, only when none of the option's subskills is unfamiliar",
                 "unfamiliar_subskills": unfamiliar, "familiar_after_nodes": FAMILIAR_NODES,
@@ -152,7 +156,7 @@ class Planner:
             res = self.router.complete("plan_branches", msgs, schema=OPTIONS_SCHEMA, track=self.track)
             options, errors = validate_options(res.json, fw, inp["scores"], diff, unfamiliar)
             if not errors:
-                out = {"options": options, "model": res.model, "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+                out = {"options": options + TierExams(NodeStore(self.root, self.track), self.router, self.domain_pack).offers(), "model": res.model, "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
                        "difficulty": {"mode": diff.mode, "success_rate": inp["difficulty"]["success_rate"], "rated_nodes": diff.n}}  # fmt: skip
                 self._save(out)
                 return out

@@ -953,6 +953,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/competency": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Competency
+         * @description Domains x tiers of the ACTIVE track: descriptors, mastery, the unlock condition, subskills and the tier-exam state.
+         */
+        get: operations["getCompetency"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/competency/{domain}/exam": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Exam
+         * @description Create the tier-exam node of an unlocked domain (heavy call writes its 6 questions); an exam already in progress is returned instead.
+         */
+        post: operations["startTierExam"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/graph": {
         parameters: {
             query?: never;
@@ -1479,6 +1519,13 @@ export interface components {
             /** Detail */
             detail?: string | null;
         };
+        /** CompetencyView */
+        CompetencyView: {
+            /** Track */
+            track: string;
+            /** Domains */
+            domains: components["schemas"]["DomainCompetency"][];
+        };
         /**
          * ContainerStatus
          * @description The Builder/checker container (mounts all of data/tracks) and the learner container (one node's workspace/).
@@ -1543,6 +1590,27 @@ export interface components {
             /** Domains */
             domains: components["schemas"]["DiagnosticDomain"][];
         };
+        /** DomainCompetency */
+        DomainCompetency: {
+            /** Domain */
+            domain: string;
+            /** Name */
+            name: string;
+            /** Scope */
+            scope: string;
+            /** Tier */
+            tier: number;
+            /** Mastery */
+            mastery: number;
+            /** N Window */
+            n_window: number;
+            /** Tiers */
+            tiers: components["schemas"]["TierDescriptor"][];
+            unlock: components["schemas"]["UnlockView"];
+            /** Subskills */
+            subskills: components["schemas"]["SubskillView"][];
+            exam: components["schemas"]["ExamView"];
+        };
         /** DomainScoreView */
         DomainScoreView: {
             /** Domain */
@@ -1559,6 +1627,49 @@ export interface components {
             unlocked: boolean;
             /** Subskills Evidenced */
             subskills_evidenced: string[];
+        };
+        /** ExamAttempt */
+        ExamAttempt: {
+            /** Node Id */
+            node_id: number;
+            /** Dir */
+            dir: string;
+            /** Tier */
+            tier?: number | null;
+            /** Status */
+            status: string;
+            /** Passed */
+            passed?: boolean | null;
+            /** Mean */
+            mean?: number | null;
+            /** Tier Up */
+            tier_up: boolean;
+        };
+        /** ExamStarted */
+        ExamStarted: {
+            /** Node Id */
+            node_id: number;
+            /** Dir */
+            dir: string;
+            /** Reused */
+            reused: boolean;
+        };
+        /** ExamView */
+        ExamView: {
+            /** State */
+            state: string;
+            /** Missing */
+            missing: string[];
+            /** Node Id */
+            node_id?: number | null;
+            /** Pass Mean */
+            pass_mean: number;
+            /** Questions */
+            questions: number;
+            /** Attempts */
+            attempts: components["schemas"]["ExamAttempt"][];
+            /** Tier Ups */
+            tier_ups: components["schemas"]["TierUp"][];
         };
         /** Framework */
         Framework: {
@@ -2045,6 +2156,13 @@ export interface components {
             /** Model */
             model?: string | null;
         };
+        /** SubskillView */
+        SubskillView: {
+            /** Name */
+            name: string;
+            /** Evidenced */
+            evidenced: boolean;
+        };
         /** SummaryView */
         SummaryView: {
             /** Text */
@@ -2053,6 +2171,22 @@ export interface components {
             tokens: number;
             /** Cap */
             cap: number;
+        };
+        /** TierDescriptor */
+        TierDescriptor: {
+            /** Tier */
+            tier: number;
+            /** Descriptor */
+            descriptor: string;
+            /** State */
+            state: string;
+        };
+        /** TierUp */
+        TierUp: {
+            /** Tier */
+            tier: number;
+            /** Via */
+            via: string;
         };
         /** TrackView */
         TrackView: {
@@ -2142,6 +2276,19 @@ export interface components {
             }[];
             /** Model */
             model?: string | null;
+        };
+        /** UnlockView */
+        UnlockView: {
+            /** Mastery Needed */
+            mastery_needed: number;
+            /** Subskills Needed */
+            subskills_needed: number;
+            /** Subskills Evidenced */
+            subskills_evidenced: number;
+            /** Mastery Ok */
+            mastery_ok: boolean;
+            /** Subskills Ok */
+            subskills_ok: boolean;
         };
         /** Uploaded */
         Uploaded: {
@@ -3807,6 +3954,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DomainScoreView"][];
+                };
+            };
+        };
+    };
+    getCompetency: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompetencyView"];
+                };
+            };
+        };
+    };
+    startTierExam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExamStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -45,7 +45,7 @@ def test_planner_input_has_the_full_set_incl_outcomes_difficulty_and_sizing(data
     DataLayout(data, T).summary_path.write_text("## 0001 Node 1 (challenge, matching, T3): success\n")
     rebuild_db(data)
     inp = Planner(data, T, None, "rfic").planner_input()
-    assert set(inp) == {"goals", "summary", "framework", "scores", "open_misconceptions", "recent_nodes", "difficulty", "sizing"}
+    assert set(inp) == {"goals", "summary", "framework", "scores", "open_misconceptions", "recent_nodes", "difficulty", "sizing", "tier_exams_unlocked"}
     assert "60 GHz" in inp["goals"] and inp["summary"].startswith("## 0001") and inp["scores"]["matching"]["tier"] == 3
     assert inp["open_misconceptions"] == [{"text": "NF adds linearly", "subskill": "noise.figure_cascade"}]
     assert [(n["id"], n["outcome"]) for n in inp["recent_nodes"]] == [(5, "in_progress"), (4, "oral_failed"), (3, "success"), (2, "success"), (1, "success")]

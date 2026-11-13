@@ -164,7 +164,10 @@ class NodeStore:
 
     # --- key files (hidden: only the code paths that need them call these) ---------------------------------
     def prelab_key(self, ref: NodeRef) -> list[dict]:
-        doc = yaml.safe_load((ref.path / "_hidden" / "prelab_key.yaml").read_text(encoding="utf-8")) or {}
+        path = ref.path / "_hidden" / "prelab_key.yaml"
+        if not path.is_file():  # a tier exam has no prelab (§8.4)
+            return []
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return [it for it in doc.get("items") or [] if isinstance(it, dict)]
 
     def oral_key(self, ref: NodeRef) -> list[dict]:

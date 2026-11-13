@@ -237,7 +237,7 @@ class Debrief:
         proof = self.store.session(ref, "proof", {"submissions": []})
         subs = proof.get("submissions", [])
         return {
-            "node_id": ref.id, "title": fm.get("title"), "status": self.store.status(ref), "provisional": bool(fm.get("provisional")),
+            "node_id": ref.id, "title": fm.get("title"), "kind": fm.get("kind"), "status": self.store.status(ref), "provisional": bool(fm.get("provisional")),
             "proof": {"passed": any(s.get("verdict") == "pass" for s in subs), "submissions": len(subs),
                       "failed_submissions": sum(1 for s in subs if s.get("verdict") == "fail")},  # fmt: skip
             "checker": public_checker(self.store.session(ref, "checker", None)),  # the latest run (the passing proof run after proof)
@@ -276,20 +276,26 @@ class Debrief:
     def write_md(self, ref: NodeRef) -> None:
         """debrief.md (§4.1): a readable snapshot of the view at this moment."""
         v = self.view(ref)
-        L = [f"# Debrief: {v['title']}", "", f"Provisional: {'yes (grades pending)' if v['provisional'] else 'no'}", "",
-             f"Proof: {'passed' if v['proof']['passed'] else 'not passed'} after {v['proof']['submissions']} submission(s)", "", "## Prediction vs actual", ""]  # fmt: skip
-        for c in v["calibration"]["numeric"]:
-            L.append(f"- {c['id']} ({c['subskill']}): predicted {c['predicted']:g} {c['unit']}, actual {c['actual']:g} {c['unit']} "
-                     f"({'within' if c['within'] else 'outside'} tolerance)")  # fmt: skip
-        L += ["", "## Written explanations", ""]
-        if v["grades"]["status"] == "pending":
-            L.append("Grades pending: they will appear here when grading succeeds.")
-        for r in v["grades"]["items"]:
-            L.append(f"- {r['id']} ({r['subskill']}): {r['score']}/3" + (f' "{r["quote"]}"' if r["quote"] else "") + f" {r['rationale']}")
+        exam = v["kind"] == "tier_exam"
+        L = [f"# Debrief: {v['title']}", "", f"Provisional: {'yes (grades pending)' if v['provisional'] else 'no'}", ""]
+        if not exam:
+            L += [f"Proof: {'passed' if v['proof']['passed'] else 'not passed'} after {v['proof']['submissions']} submission(s)", "", "## Prediction vs actual", ""]
+            for c in v["calibration"]["numeric"]:
+                L.append(f"- {c['id']} ({c['subskill']}): predicted {c['predicted']:g} {c['unit']}, actual {c['actual']:g} {c['unit']} "
+                         f"({'within' if c['within'] else 'outside'} tolerance)")  # fmt: skip
+            L += ["", "## Written explanations", ""]
+            if v["grades"]["status"] == "pending":
+                L.append("Grades pending: they will appear here when grading succeeds.")
+            for r in v["grades"]["items"]:
+                L.append(f"- {r['id']} ({r['subskill']}): {r['score']}/3" + (f' "{r["quote"]}"' if r["quote"] else "") + f" {r['rationale']}")
         o = v["oral"]
         L += ["", "## Oral", ""]
         if o.get("items"):
-            L.append(f"{'Passed' if o['passed'] else 'Not passed'} (mean {'n/a' if o['mean'] is None else format(o['mean'], '.2f')} over non-interleaved items; pass = mean >= 2.0 and no 0).")
+            rule = "all 6 items; pass = mean >= 2.3 and no 0" if exam else "non-interleaved items; pass = mean >= 2.0 and no 0"
+            L.append(f"{'Passed' if o['passed'] else 'Not passed'} (mean {'n/a' if o['mean'] is None else format(o['mean'], '.2f')} over {rule}).")
+            if o.get("exam"):
+                x = o["exam"]
+                L.append(f"Tier exam, {x['domain']}: " + (f"tier up, T{x['tier_before']} -> T{x['tier_after']}, mastery starts fresh." if x["tier_up"] else f"stays at T{x['tier_before']}."))
             L += [f"- {r['id']} ({r['subskill']}{', interleaved' if r['interleaved'] else ''}): {r['score']}/3" + (f' "{r["quote"]}"' if r["quote"] else "") + f" {r['rationale']}" for r in o["items"]]
             if o.get("remediation"):
                 L.append(f"- remediation: {o['remediation'].get('status')}" + (f" ({o['remediation']['node_dir']})" if o["remediation"].get("node_dir") else ""))
